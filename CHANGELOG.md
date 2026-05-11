@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.1.1
+
+UI polish for the verification-result widgets. No API or wire-shape
+changes — the underlying `Verification` / `FieldResult` /
+`MrzNormalized` models are unchanged.
+
+### Added
+
+- `CategoriesTableCard` — collapsible card rendering the driving-licence
+  categories table (`field_results["categories_table"].normalized`) as
+  a real `DataTable` with `CLASS | ISSUED | EXPIRES | RESTRICTIONS`
+  columns and a coloured chip per category. Header shows a count badge
+  (e.g. "4 categories"). Hidden when the field is absent or empty
+  (national IDs, or DLs where the back-side table parse came up empty).
+  Re-exported from `package:idz_flutter/idz_flutter.dart`.
+
+### Changed
+
+- `MrzSection` (also now re-exported):
+  - Top-right badge now reads **Valid** / **Invalid** (was
+    "MRZ verified" / "MRZ invalid"). Same semantics, tighter copy.
+  - Per-row ICAO 9303 check icons inline on **Document #**,
+    **Date of birth**, **Expiry** rows — green ✓ / red ✗ driven by
+    `mrz.checks.documentNumber` / `dateOfBirth` / `expiryDate`. Tooltips
+    explain the icon meaning.
+  - The standalone **Composite** check chip is dropped from the UI. It
+    fails on a sizeable fraction of Algerian cards because OCR drops
+    line-2 filler characters — useful as a server-side diagnostic, noisy
+    and confusing as a top-level user-facing signal. Still available
+    on `mrz.checks.composite` for callers that want to surface it.
+  - Dates render as `dd MMM yyyy` (e.g. `02 Aug 1982`) via
+    `intl.DateFormat`, falling back to the raw `YYYY/MM/DD` string if
+    parsing fails.
+
+### Internal
+
+- `FieldsTab` now lifts `categories_table` out of the main fields
+  table in the same way it lifts MRZ — both render as their own card.
+  When the categories list is empty the field stays in the main table
+  so the user still sees the field name rather than nothing.
+
 ## 0.1.0
 
 Breaking change. The SDK now targets the `/v1/verifications/*` API surface

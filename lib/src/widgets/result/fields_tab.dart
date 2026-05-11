@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../models/field_result.dart';
 import '../../models/verification.dart';
 import '_result_tokens.dart';
+import 'categories_table_card.dart';
 import 'mrz_section.dart';
 import 'postprocess_notes.dart';
 
@@ -20,7 +21,9 @@ class FieldsTab extends StatelessWidget {
     final notes = PostprocessNote.parseAll(verification.postprocessNotes);
 
     final mrzField = fields['mrz'];
-    final orderedNonMrz = _orderedFields(fields);
+    final categoriesField = fields['categories_table'];
+    final hasCategoriesRows = _hasCategoriesRows(categoriesField);
+    final orderedNonMrz = _orderedFields(fields, hasCategoriesRows);
 
     final csvSnapFields = notes
         .whereType<PostprocessNoteCsvSnap>()
@@ -52,6 +55,10 @@ class FieldsTab extends StatelessWidget {
           const SizedBox(height: ResultTokens.sectionGap),
           MrzSection(field: mrzField),
         ],
+        if (categoriesField != null && hasCategoriesRows) ...[
+          const SizedBox(height: ResultTokens.sectionGap),
+          CategoriesTableCard(field: categoriesField),
+        ],
         for (final note in categoriesNotes) ...[
           const SizedBox(height: ResultTokens.rowGap),
           _CategoriesHint(note: note),
@@ -61,11 +68,30 @@ class FieldsTab extends StatelessWidget {
     );
   }
 
+  /// True iff `field.normalized` is a non-empty list (the wire shape
+  /// for a populated DL categories table). False for IDs (the field
+  /// isn't present at all) and for DL responses where the back-side
+  /// table parse turned up empty.
+  static bool _hasCategoriesRows(FieldResult? field) {
+    if (field == null) return false;
+    final v = field.normalized;
+    return v is List && v.isNotEmpty;
+  }
+
   static List<MapEntry<String, FieldResult>> _orderedFields(
     Map<String, FieldResult> fields,
+    bool hasCategoriesRows,
   ) {
-    // Keep MRZ out — it's its own card.
-    final entries = fields.entries.where((e) => e.key != 'mrz').toList();
+    // Keep MRZ out — it's its own card. Same for categories_table when
+    // it has rows — the dedicated CategoriesTableCard renders it. When
+    // the table is empty (ID docs, or a DL with a missed parse) leave
+    // it in the table so the user sees the field with an empty value
+    // rather than nothing.
+    final entries = fields.entries.where((e) {
+      if (e.key == 'mrz') return false;
+      if (e.key == 'categories_table' && hasCategoriesRows) return false;
+      return true;
+    }).toList();
     // Stable order: front fields first, then back, ties keep API order.
     int rank(MapEntry<String, FieldResult> e) {
       switch (e.value.side) {

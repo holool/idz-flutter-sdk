@@ -30,4 +30,6 @@ export 'src/widgets/liveness_recording_screen.dart';
 export 'src/widgets/selfie_capture_screen.dart';
 export 'src/widgets/verification_result_page.dart';
 export 'src/widgets/result/artifact_thumb.dart';
+export 'src/widgets/result/categories_table_card.dart';
+export 'src/widgets/result/mrz_section.dart';
 export 'src/widgets/result/postprocess_notes.dart';
