@@ -193,6 +193,7 @@ class _FieldsTable extends StatelessWidget {
                         name: entry.key,
                         autoCorrected: csvSnapFields.contains(entry.key),
                         mrzDisagrees: disagreements.contains(entry.key),
+                        lowQuality: entry.value.lowQualityIssue,
                       ),
                     ),
                     DataCell(_ValueCell(field: entry.value)),
@@ -224,11 +225,13 @@ class _FieldNameCell extends StatelessWidget {
     required this.name,
     required this.autoCorrected,
     required this.mrzDisagrees,
+    this.lowQuality,
   });
 
   final String name;
   final bool autoCorrected;
   final bool mrzDisagrees;
+  final FieldIssue? lowQuality;
 
   @override
   Widget build(BuildContext context) {
@@ -250,6 +253,10 @@ class _FieldNameCell extends StatelessWidget {
               color: ResultTokens.info,
             ),
           ),
+        ],
+        if (lowQuality != null) ...[
+          const SizedBox(width: 6),
+          _LowQualityChip(issue: lowQuality!),
         ],
         if (mrzDisagrees) ...[
           const SizedBox(width: 6),
@@ -285,6 +292,52 @@ class _FieldNameCell extends StatelessWidget {
         .join(' ');
   }
 }
+
+class _LowQualityChip extends StatelessWidget {
+  const _LowQualityChip({required this.issue});
+
+  final FieldIssue issue;
+
+  @override
+  Widget build(BuildContext context) {
+    // Prefer the API's pre-formatted message — it already embeds the
+    // confidence percentage and any context the server wants to surface.
+    // Fall back to a generic blurb only when message is empty.
+    final tooltipMessage = issue.message.isNotEmpty
+        ? issue.message
+        : 'OCR confidence below the warning threshold for this field — '
+              'verify the value before trusting it.';
+    return Tooltip(
+      message: tooltipMessage,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: ResultTokens.warning.withValues(alpha: 0.16),
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.warning_amber_rounded,
+              size: 12,
+              color: ResultTokens.warning,
+            ),
+            const SizedBox(width: 3),
+            Text(
+              'Low quality',
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: ResultTokens.warning,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 
 class _ValueCell extends StatelessWidget {
   const _ValueCell({required this.field});

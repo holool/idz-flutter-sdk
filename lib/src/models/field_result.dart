@@ -16,18 +16,48 @@ class FieldResult {
   final bool? valid;
   final String? side;
 
-  const FieldResult({this.raw, this.normalized, this.valid, this.side});
+  /// Per-field issues raised by the pipeline (e.g. `low_quality_field`,
+  /// `invalid_field_value`). Empty when nothing's wrong. Each entry
+  /// carries a short `code`, a human-readable `message`, and an optional
+  /// `details` map (e.g. `{"confidence": 0.50}` for low-quality fields).
+  final List<FieldIssue> issues;
+
+  const FieldResult({
+    this.raw,
+    this.normalized,
+    this.valid,
+    this.side,
+    this.issues = const [],
+  });
 
   factory FieldResult.fromJson(Object? json) {
     if (json is Map<String, dynamic>) {
+      final rawIssues = json['issues'];
+      final issues = rawIssues is List
+          ? rawIssues
+              .whereType<Map>()
+              .map((e) => FieldIssue.fromJson(e.cast<String, dynamic>()))
+              .toList()
+          : const <FieldIssue>[];
       return FieldResult(
         raw: json['raw'],
         normalized: json['normalized'],
         valid: json['valid'] as bool?,
         side: json['side'] as String?,
+        issues: issues,
       );
     }
     return FieldResult(raw: json, normalized: json);
+  }
+
+  /// Convenience: the lowest-confidence `low_quality_field` issue if any,
+  /// else null. UI renders a "Low quality" chip when this returns
+  /// non-null; tooltip uses the issue's `message`.
+  FieldIssue? get lowQualityIssue {
+    for (final i in issues) {
+      if (i.code == 'low_quality_field') return i;
+    }
+    return null;
   }
 
   /// `normalized` as a String, or null if it's any other shape.
@@ -62,7 +92,60 @@ class FieldResult {
     'normalized': normalized,
     'valid': valid,
     'side': side,
+    if (issues.isNotEmpty)
+      'issues': issues.map((i) => i.toJson()).toList(),
   };
+}
+
+
+/// One pipeline-emitted issue attached to a [FieldResult].
+///
+/// Known codes (non-exhaustive — match defensively, fall back to
+/// rendering the raw `message`):
+///   - `low_quality_field`: OCR confidence below the warning floor.
+///     `details.confidence` is a 0..1 float when present.
+///   - `invalid_field_value`: validator rejected the normalized value.
+///     `details` is usually absent.
+class FieldIssue {
+  const FieldIssue({
+    required this.code,
+    required this.message,
+    this.severity,
+    this.details,
+  });
+
+  final String code;
+  final String message;
+
+  /// `info` | `warning` | `error`. Often null — most issues are warnings.
+  final String? severity;
+
+  /// Optional structured payload. Read defensively — keys vary by `code`.
+  final Map<String, dynamic>? details;
+
+  factory FieldIssue.fromJson(Map<String, dynamic> json) {
+    final rawDetails = json['details'];
+    return FieldIssue(
+      code: (json['code'] as String?) ?? '',
+      message: (json['message'] as String?) ?? '',
+      severity: json['severity'] as String?,
+      details: rawDetails is Map ? rawDetails.cast<String, dynamic>() : null,
+    );
+  }
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'code': code,
+    'message': message,
+    if (severity != null) 'severity': severity,
+    if (details != null) 'details': details,
+  };
+
+  /// Confidence as a 0..1 double, only set on `low_quality_field`. Null
+  /// for any other code or when details are absent / malformed.
+  double? get confidence {
+    final v = details?['confidence'];
+    return v is num ? v.toDouble() : null;
+  }
 }
 
 /// Parsed Machine-Readable Zone (TD1 layout, three lines × 30 chars) of

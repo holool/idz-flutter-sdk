@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.1.2
+
+### Added
+
+- `FieldResult.issues` — surfaces per-field pipeline issues the server
+  was already emitting but the SDK ignored. Each entry is a
+  `FieldIssue` carrying `code` / `message` / optional
+  `severity` / optional `details` map.
+- `FieldResult.lowQualityIssue` — convenience getter returning the first
+  `low_quality_field` issue, or null. Use it to gate UI badges.
+- `FieldIssue.confidence` — typed accessor for the 0..1 confidence
+  embedded in `details["confidence"]` on `low_quality_field` issues.
+- `FieldsTab` now renders a yellow ⚠ **Low quality** chip next to any
+  field that carries a `low_quality_field` issue. The tooltip uses the
+  API's pre-formatted message (which already includes the confidence
+  percentage), falling back to a generic blurb only when the message
+  is empty.
+
+### Internal
+
+- No wire-shape changes. Pre-0.1.2 servers that don't emit `issues`
+  remain compatible — the list parses as empty and no chip renders.
+
 ## 0.1.1
 
 UI polish for the verification-result widgets. No API or wire-shape
