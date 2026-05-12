@@ -284,7 +284,18 @@ class _FieldNameCell extends StatelessWidget {
     );
   }
 
+  /// Hand-tuned display labels for fields where the API key isn't what
+  /// the end user calls the thing. Anything not in this map falls
+  /// through to generic snake_case → Title Case conversion.
+  static const _labelOverrides = <String, String>{
+    'id_number': 'NIN',
+    'nin': 'NIN',
+    'mrz': 'MRZ',
+  };
+
   String _humanise(String snake) {
+    final override = _labelOverrides[snake];
+    if (override != null) return override;
     return snake
         .replaceAll('_', ' ')
         .split(' ')

@@ -36,7 +36,22 @@ class _MrzSectionState extends State<MrzSection> {
     if (mrz == null) return const SizedBox.shrink();
     final scheme = Theme.of(context).colorScheme;
     final passed = mrz.valid ?? false;
-    final headerColor = passed ? ResultTokens.success : ResultTokens.danger;
+    final hasViz = (mrz.fieldsFromViz ?? const []).isNotEmpty;
+    // Three header states:
+    //   - valid==true            → green "Valid"
+    //   - failed + any VIZ fill  → yellow "Recovered" (data trustworthy
+    //     even though ICAO failed)
+    //   - failed + no VIZ fill   → red "Invalid"
+    final headerColor = passed
+        ? ResultTokens.success
+        : hasViz
+            ? ResultTokens.warning
+            : ResultTokens.danger;
+    final headerLabel = passed
+        ? 'Valid'
+        : hasViz
+            ? 'Recovered'
+            : 'Invalid';
     final checks = mrz.checks;
 
     return Card(
@@ -51,7 +66,7 @@ class _MrzSectionState extends State<MrzSection> {
                 const SizedBox(width: 8),
                 Text('MRZ', style: Theme.of(context).textTheme.titleMedium),
                 const Spacer(),
-                _StatusBadge(passed: passed, color: headerColor),
+                _StatusBadge(label: headerLabel, color: headerColor),
               ],
             ),
             const SizedBox(height: 12),
@@ -61,23 +76,33 @@ class _MrzSectionState extends State<MrzSection> {
                   'Document #',
                   mrz.documentNumber!,
                   check: checks?.documentNumber,
+                  fromViz: mrz.isFromViz('document_number'),
                 ),
               if (mrz.dateOfBirth != null)
                 _kv(
                   'Date of birth',
                   _formatDate(mrz.dateOfBirth!),
                   check: checks?.dateOfBirth,
+                  fromViz: mrz.isFromViz('date_of_birth'),
                 ),
               if (mrz.expiryDate != null)
                 _kv(
                   'Expiry',
                   _formatDate(mrz.expiryDate!),
                   check: checks?.expiryDate,
+                  fromViz: mrz.isFromViz('expiry_date'),
                 ),
-              if (mrz.sex != null) _kv('Sex', mrz.sex!),
+              if (mrz.sex != null)
+                _kv('Sex', mrz.sex!, fromViz: mrz.isFromViz('sex')),
               if (mrz.nationality != null) _kv('Nationality', mrz.nationality!),
-              if (mrz.surname != null) _kv('Surname', mrz.surname!),
-              if (mrz.givenNames != null) _kv('Given names', mrz.givenNames!),
+              if (mrz.surname != null)
+                _kv('Surname', mrz.surname!, fromViz: mrz.isFromViz('surname')),
+              if (mrz.givenNames != null)
+                _kv(
+                  'Given names',
+                  mrz.givenNames!,
+                  fromViz: mrz.isFromViz('given_names'),
+                ),
               if (mrz.documentType != null) _kv('Type', mrz.documentType!),
             ]),
             const SizedBox(height: 8),
@@ -124,7 +149,22 @@ class _MrzSectionState extends State<MrzSection> {
     );
   }
 
-  Widget _kv(String key, String value, {bool? check}) {
+  Widget _kv(
+    String key,
+    String value, {
+    bool? check,
+    bool fromViz = false,
+  }) {
+    // `fromViz` wins over `check` — when the server replaced the MRZ
+    // value from the front-side VIZ, the displayed value is correct
+    // even though the MRZ check digit failed. Show a blue info icon
+    // ("filled from face") instead of a red ✗ so the user doesn't
+    // think the data is wrong.
+    final Widget? trailing = fromViz
+        ? const _FromVizIcon()
+        : check == null
+            ? null
+            : _CheckIcon(passed: check);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
@@ -144,9 +184,9 @@ class _MrzSectionState extends State<MrzSection> {
               style: const TextStyle(fontWeight: FontWeight.w600),
             ),
           ),
-          if (check != null) ...[
+          if (trailing != null) ...[
             const SizedBox(width: 6),
-            _CheckIcon(passed: check),
+            trailing,
           ],
         ],
       ),
@@ -168,9 +208,9 @@ class _MrzSectionState extends State<MrzSection> {
 
 
 class _StatusBadge extends StatelessWidget {
-  const _StatusBadge({required this.passed, required this.color});
+  const _StatusBadge({required this.label, required this.color});
 
-  final bool passed;
+  final String label;
   final Color color;
 
   @override
@@ -182,12 +222,35 @@ class _StatusBadge extends StatelessWidget {
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
-        passed ? 'Valid' : 'Invalid',
+        label,
         style: Theme.of(context).textTheme.labelSmall?.copyWith(
           color: color,
           fontWeight: FontWeight.w700,
           letterSpacing: 0.4,
         ),
+      ),
+    );
+  }
+}
+
+
+/// "Filled from front-side OCR" indicator. Used in place of the red ✗
+/// check icon when the server replaced the MRZ value via VIZ fallback
+/// — the displayed value is trustworthy even though the ICAO check
+/// failed.
+class _FromVizIcon extends StatelessWidget {
+  const _FromVizIcon();
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'Recovered from the front-side OCR. The MRZ data for this '
+          'field was damaged, but the value comes from a separate, '
+          'independently-verified read of the same field.',
+      child: Icon(
+        Icons.swap_horiz_rounded,
+        size: 16,
+        color: ResultTokens.info,
       ),
     );
   }

@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.1.3
+
+Surfaces the server's MRZ → VIZ fallback so the UI stops looking
+broken when the MRZ is partially OCR-damaged but the values are
+correct (recovered from the front-side independent OCR).
+
+### Added
+
+- `MrzNormalized.fieldsFromViz` (`List<String>?`) — snake-case field
+  names the server replaced via `fill_mrz_from_viz` because the
+  MRZ-side value was damaged or the ICAO check digit failed. Drawn
+  from `document_number` / `date_of_birth` / `expiry_date` / `sex` /
+  `surname` / `given_names`.
+- `MrzNormalized.isFromViz(String key)` — null/empty-safe membership
+  check.
+
+### Changed
+
+- `MrzSection` per-row trailing icon now distinguishes three states:
+  - **Green ✓** — ICAO check passed.
+  - **🔄 info** (new) — value was filled from the front-side VIZ
+    because the MRZ-side was unreliable. Tooltip explains: the
+    displayed value is trustworthy; the MRZ just couldn't prove it.
+  - **Red ✗** — ICAO check failed AND no VIZ fallback was available;
+    treat the value with suspicion.
+- Top-right badge has a third state: **Recovered** (yellow) when the
+  MRZ-level `valid` is false but at least one field was rescued from
+  VIZ. Previously this case showed as "Invalid" even though the
+  displayed data was correct — confusing.
+
 ## 0.1.2
 
 ### Added

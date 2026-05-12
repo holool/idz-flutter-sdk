@@ -188,6 +188,16 @@ class MrzNormalized {
   /// Per-field check-digit results.
   final MrzChecks? checks;
 
+  /// Snake-case MRZ field names that the server replaced from the
+  /// front-side VIZ OCR because the MRZ-side value was damaged or the
+  /// check digit failed. Members are drawn from the same set as the
+  /// MRZ field keys: `document_number`, `date_of_birth`, `expiry_date`,
+  /// `sex`, `surname`, `given_names`.
+  ///
+  /// Use [isFromViz] to query a single key in the UI without worrying
+  /// about null/empty list semantics.
+  final List<String>? fieldsFromViz;
+
   const MrzNormalized({
     this.documentType,
     this.documentNumber,
@@ -199,9 +209,11 @@ class MrzNormalized {
     this.givenNames,
     this.valid,
     this.checks,
+    this.fieldsFromViz,
   });
 
   factory MrzNormalized.fromJson(Map<String, dynamic> json) {
+    final rawViz = json['fields_from_viz'];
     return MrzNormalized(
       documentType: json['document_type'] as String?,
       documentNumber: json['document_number'] as String?,
@@ -215,7 +227,17 @@ class MrzNormalized {
       checks: json['checks'] is Map
           ? MrzChecks.fromJson((json['checks'] as Map).cast<String, dynamic>())
           : null,
+      fieldsFromViz: rawViz is List
+          ? rawViz.whereType<String>().toList()
+          : null,
     );
+  }
+
+  /// True iff `key` is present in [fieldsFromViz]. Safe on null /
+  /// empty — returns false in both cases.
+  bool isFromViz(String key) {
+    final list = fieldsFromViz;
+    return list != null && list.contains(key);
   }
 }
 
