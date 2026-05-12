@@ -9,6 +9,7 @@ export 'src/idz_flutter.dart';
 export 'src/client/idz_api_client.dart';
 
 // Models
+export 'src/models/api_error.dart';
 export 'src/models/artifacts_catalog.dart';
 export 'src/models/document_type.dart';
 export 'src/models/field_result.dart';

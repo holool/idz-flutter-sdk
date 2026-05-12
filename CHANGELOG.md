@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.1.4
+
+Adopts the IDz API's new structured error object. The legacy
+`failure_reason` string is still emitted server-side as a copy of
+`error.code` for backward compat; new SDK code should switch on
+`error.code` and render `error.userMessage` (or its localized
+counterpart via code lookup).
+
+### Added
+
+- `ApiError` model (`code` / `developerMessage` / `userMessage` /
+  `userAction` / `retryable`). The `code` is the stable machine-
+  readable identifier — switch on it rather than parsing message
+  strings.
+- `ApiError.hasUserContent` — true iff `userMessage` is non-empty.
+  Dev-only codes (`AUTH_REQUIRED`, `RESOURCE_NOT_FOUND`, rate-limits)
+  carry empty `userMessage` deliberately; UI code MUST gate
+  rendering on this.
+- `UserAction` enum — `retakeDocument` / `retakeSelfie` /
+  `retakeLiveness` / `improveImageQuality` / `waitAndRetry` /
+  `contactSupport` / `none`. Snake-case wire values exposed via
+  `UserAction.wireValue` for round-trip.
+- `Verification.error` — top-level structured error for whole-
+  verification failures.
+- `CheckResult.error` — per-check structured error (on `document` /
+  `faceMatch` / `liveness`).
+
+### Changed
+
+- `KycResultCard` now prefers `error.userMessage` over
+  `failureReason` when rendering failure banners. The banner also
+  shows a small chip describing the suggested `userAction`
+  (e.g. "Retake document"). Banners are skipped entirely for
+  dev-only codes (empty user_message).
+
+### Compatibility
+
+- Wire-shape additive — pre-`0.1.4` servers that don't emit
+  `error` parse as `null`, and the SDK falls back to the legacy
+  `failureReason` path. No client code changes required for
+  consumers staying on the old shape.
+
 ## 0.1.3
 
 Surfaces the server's MRZ → VIZ fallback so the UI stops looking

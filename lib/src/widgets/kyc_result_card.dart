@@ -2,6 +2,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
+import '../models/api_error.dart';
 import '../models/field_result.dart';
 import '../models/verification.dart';
 
@@ -48,8 +49,20 @@ class KycResultCard extends StatelessWidget {
             ),
             const Divider(height: 24),
 
-            if (docCheck?.failureReason != null)
+            // Banner order: top-level verification error first, then
+            // per-check errors. Skip both if user_message is empty
+            // (dev-only codes shouldn't reach end users).
+            if (verification.error?.hasUserContent == true)
+              _failureBannerFromError(verification.error!),
+            if (docCheck?.error?.hasUserContent == true)
+              _failureBannerFromError(docCheck!.error!)
+            else if (docCheck?.failureReason != null &&
+                verification.error == null)
               _failureBanner(docCheck!.failureReason!),
+            if (faceMatch?.error?.hasUserContent == true)
+              _failureBannerFromError(faceMatch!.error!),
+            if (liveness?.error?.hasUserContent == true)
+              _failureBannerFromError(liveness!.error!),
 
             if (faceMatch != null) ...[
               _buildScoreRow(
@@ -136,6 +149,84 @@ class KycResultCard extends StatelessWidget {
       ],
     ),
   );
+
+  /// Banner driven by the structured ApiError. Renders user_message
+  /// + a small chip describing the suggested user_action (e.g.
+  /// "Retake document"). Falls back to the legacy [_failureBanner]
+  /// for the message-only case.
+  Widget _failureBannerFromError(ApiError error) {
+    final actionLabel = _userActionLabel(error.userAction);
+    return Container(
+      padding: const EdgeInsets.all(12),
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        color: Colors.red.shade50,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.error_outline, color: Colors.red),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  error.userMessage,
+                  style: const TextStyle(color: Colors.red),
+                ),
+                if (actionLabel != null) ...[
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade100,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      actionLabel,
+                      style: TextStyle(
+                        color: Colors.red.shade900,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Default English copy for each [UserAction]. Apps that need
+  /// localised CTAs should override this by reading
+  /// `verification.checks.*.error.userAction` themselves and looking
+  /// up the localised string. Returns null for [UserAction.none].
+  String? _userActionLabel(UserAction action) {
+    switch (action) {
+      case UserAction.retakeDocument:
+        return 'Retake document';
+      case UserAction.retakeSelfie:
+        return 'Retake selfie';
+      case UserAction.retakeLiveness:
+        return 'Retake liveness video';
+      case UserAction.improveImageQuality:
+        return 'Improve image quality';
+      case UserAction.waitAndRetry:
+        return 'Try again in a moment';
+      case UserAction.contactSupport:
+        return 'Contact support';
+      case UserAction.none:
+        return null;
+    }
+  }
 
   Widget _buildScoreRow(String label, double? score, bool passed) {
     final percent = score != null

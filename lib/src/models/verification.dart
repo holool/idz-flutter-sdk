@@ -1,3 +1,4 @@
+import 'api_error.dart';
 import 'document_type.dart';
 import 'field_result.dart';
 
@@ -12,6 +13,15 @@ class Verification {
   final List<VerificationArtifact> artifacts;
   final Map<String, dynamic>? metadata;
 
+  /// Top-level structured error when the whole verification failed
+  /// (e.g. all checks aborted, an upstream service was unreachable).
+  /// Per-check failures live on [VerificationChecks.document.error] /
+  /// `faceMatch.error` / `liveness.error` instead.
+  ///
+  /// `null` when there's no top-level error — the common case even on
+  /// `status: "rejected"` (the rejection lives on a per-check error).
+  final ApiError? error;
+
   const Verification({
     required this.id,
     required this.mode,
@@ -22,6 +32,7 @@ class Verification {
     required this.checks,
     this.artifacts = const <VerificationArtifact>[],
     this.metadata,
+    this.error,
   });
 
   bool get isPassed => status == 'completed';
@@ -63,6 +74,9 @@ class Verification {
           )
           .toList(),
       metadata: (json['metadata'] as Map?)?.cast<String, dynamic>(),
+      error: json['error'] is Map<String, dynamic>
+          ? ApiError.fromJson(json['error'] as Map<String, dynamic>)
+          : null,
     );
   }
 }
@@ -88,9 +102,25 @@ class VerificationDocument {
 class CheckResult {
   final bool? passed;
   final double? score;
+
+  /// Legacy snake-case failure code (e.g. `face_match_failed`). Still
+  /// emitted by the server as a copy of [error.code] for backward
+  /// compat. New code should prefer [error] — switch on `error.code`
+  /// and render `error.userMessage` / use `error.userAction` for the
+  /// CTA.
   final String? failureReason;
 
-  const CheckResult({this.passed, this.score, this.failureReason});
+  /// Structured error when this check failed. `null` when the check
+  /// passed (or wasn't evaluated). Has end-user-safe copy + a CTA hint
+  /// + a `retryable` flag.
+  final ApiError? error;
+
+  const CheckResult({
+    this.passed,
+    this.score,
+    this.failureReason,
+    this.error,
+  });
 
   factory CheckResult.fromJson(Object? json) {
     if (json is! Map<String, dynamic>) return const CheckResult();
@@ -98,6 +128,9 @@ class CheckResult {
       passed: json['passed'] as bool?,
       score: _doubleOrNull(json['score']),
       failureReason: json['failure_reason'] as String?,
+      error: json['error'] is Map<String, dynamic>
+          ? ApiError.fromJson(json['error'] as Map<String, dynamic>)
+          : null,
     );
   }
 }
