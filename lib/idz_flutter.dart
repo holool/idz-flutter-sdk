@@ -14,6 +14,7 @@ export 'src/models/artifacts_catalog.dart';
 export 'src/models/document_type.dart';
 export 'src/models/field_result.dart';
 export 'src/models/verification.dart';
+export 'src/models/verification_metadata.dart';
 
 // Errors
 export 'src/exceptions/either.dart';
@@ -30,6 +31,7 @@ export 'src/widgets/kyc_result_card.dart';
 export 'src/widgets/liveness_recording_screen.dart';
 export 'src/widgets/selfie_capture_screen.dart';
 export 'src/widgets/verification_result_page.dart';
+export 'src/widgets/result/_result_tokens.dart' show VerdictTone, VerdictChip;
 export 'src/widgets/result/artifact_thumb.dart';
 export 'src/widgets/result/categories_table_card.dart';
 export 'src/widgets/result/mrz_section.dart';

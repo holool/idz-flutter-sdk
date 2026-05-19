@@ -5,20 +5,36 @@ import 'package:flutter/material.dart';
 import '../models/api_error.dart';
 import '../models/field_result.dart';
 import '../models/verification.dart';
+import 'result/_result_tokens.dart';
 
 /// Display a [Verification] in a card layout.
+///
+/// Renders one of five visual states keyed off `(status, reviewState)`:
+///
+///   - `in_progress`             — neutral, no checkmark, "being processed".
+///   - `completed` + no review   — green "Verified".
+///   - `completed` + `pending`   — amber "Submitted — under review"
+///                                 (no green checkmark — verdict pending).
+///   - `rejected`                — red headline + the server's
+///                                 [ApiError.userMessage] and an action
+///                                 button derived from [ApiError.userAction].
+///   - `failed`                  — red headline; "Try again" only when
+///                                 the error envelope says
+///                                 [ApiError.retryable] is true.
+///
+/// The host app handles navigation for the action button via [onAction].
+/// Pass `null` to omit the button entirely.
 class KycResultCard extends StatelessWidget {
   final Verification verification;
+  final void Function(UserAction action)? onAction;
 
-  const KycResultCard({super.key, required this.verification});
+  const KycResultCard({super.key, required this.verification, this.onAction});
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final passed = verification.isPassed;
-    final docCheck = verification.checks.document;
-    final faceMatch = verification.checks.faceMatch;
-    final liveness = verification.checks.liveness;
+    final tone = VerdictTone.of(verification);
+    final primaryError = _primaryError();
 
     return Card(
       margin: const EdgeInsets.all(16),
@@ -30,17 +46,13 @@ class KycResultCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(
-                  passed ? Icons.check_circle : Icons.cancel,
-                  color: passed ? Colors.green : Colors.red,
-                  size: 32,
-                ),
+                Icon(tone.icon, color: tone.color, size: 32),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    passed ? 'Verified' : _statusLabel(verification.status),
+                    tone.label,
                     style: theme.textTheme.headlineSmall?.copyWith(
-                      color: passed ? Colors.green : Colors.red,
+                      color: tone.color,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
@@ -49,62 +61,20 @@ class KycResultCard extends StatelessWidget {
             ),
             const Divider(height: 24),
 
-            // Banner order: top-level verification error first, then
-            // per-check errors. Skip both if user_message is empty
-            // (dev-only codes shouldn't reach end users).
-            if (verification.error?.hasUserContent == true)
-              _failureBannerFromError(verification.error!),
-            if (docCheck?.error?.hasUserContent == true)
-              _failureBannerFromError(docCheck!.error!)
-            else if (docCheck?.failureReason != null &&
-                verification.error == null)
-              _failureBanner(docCheck!.failureReason!),
-            if (faceMatch?.error?.hasUserContent == true)
-              _failureBannerFromError(faceMatch!.error!),
-            if (liveness?.error?.hasUserContent == true)
-              _failureBannerFromError(liveness!.error!),
-
-            if (faceMatch != null) ...[
-              _buildScoreRow(
-                'Face match',
-                faceMatch.score,
-                faceMatch.passed ?? false,
-              ),
+            if (primaryError != null) ...[
+              _errorBanner(context, primaryError),
               const SizedBox(height: 12),
+            ] else if (tone == VerdictTone.rejected ||
+                tone == VerdictTone.failed) ...[
+              // Rejected/failed without a structured ApiError — fall back
+              // to the legacy `failure_reason` string from the document
+              // check. Never surface developer_message.
+              if (verification.checks.document?.failureReason != null)
+                _failureBanner(verification.checks.document!.failureReason!),
             ],
 
-            if (liveness != null) ...[
-              Row(
-                children: [
-                  Icon(
-                    (liveness.passed ?? false)
-                        ? Icons.verified_user
-                        : Icons.shield,
-                    color: (liveness.passed ?? false)
-                        ? Colors.green
-                        : Colors.orange,
-                    size: 20,
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Liveness: '
-                    '${(liveness.passed ?? false) ? "Passed" : "Failed"}',
-                    style: theme.textTheme.bodyLarge,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-            ],
-
-            if (verification.document?.fields != null &&
-                verification.document!.fields!.isNotEmpty) ...[
-              const Text(
-                'Extracted fields',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              ..._buildFieldRows(verification.document!.fields!),
-            ],
+            if (tone == VerdictTone.verified || tone == VerdictTone.underReview)
+              ..._buildPostVerdictBody(context, theme),
 
             if (verification.completedAt != null) ...[
               const SizedBox(height: 16),
@@ -119,110 +89,159 @@ class KycResultCard extends StatelessWidget {
     );
   }
 
-  String _statusLabel(String status) {
-    switch (status) {
-      case 'rejected':
-        return 'Rejected';
-      case 'failed':
-        return 'Failed';
-      case 'in_progress':
-        return 'In progress';
-      default:
-        return 'Verification ${status.replaceAll('_', ' ')}';
-    }
+  /// Pick the first user-facing structured error: top-level first, then
+  /// per-check (document → face match → liveness). Skips dev-only codes
+  /// whose `user_message` is empty.
+  ApiError? _primaryError() {
+    final top = verification.error;
+    if (top != null && top.hasUserContent) return top;
+    final doc = verification.checks.document?.error;
+    if (doc != null && doc.hasUserContent) return doc;
+    final face = verification.checks.faceMatch?.error;
+    if (face != null && face.hasUserContent) return face;
+    final liveness = verification.checks.liveness?.error;
+    if (liveness != null && liveness.hasUserContent) return liveness;
+    return null;
+  }
+
+  List<Widget> _buildPostVerdictBody(BuildContext context, ThemeData theme) {
+    final faceMatch = verification.checks.faceMatch;
+    final liveness = verification.checks.liveness;
+    final fields = verification.document?.fields;
+    return <Widget>[
+      if (faceMatch != null) ...[
+        _buildScoreRow(
+          'Face match',
+          faceMatch.score,
+          faceMatch.passed ?? false,
+        ),
+        const SizedBox(height: 12),
+      ],
+      if (liveness != null) ...[
+        Row(
+          children: [
+            Icon(
+              (liveness.passed ?? false) ? Icons.verified_user : Icons.shield,
+              color: (liveness.passed ?? false)
+                  ? Colors.green
+                  : Colors.orange,
+              size: 20,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              'Liveness: '
+              '${(liveness.passed ?? false) ? "Passed" : "Failed"}',
+              style: theme.textTheme.bodyLarge,
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+      ],
+      if (fields != null && fields.isNotEmpty) ...[
+        const Text(
+          'Extracted fields',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        ..._buildFieldRows(fields),
+      ],
+    ];
   }
 
   Widget _failureBanner(String reason) => Container(
     padding: const EdgeInsets.all(12),
-    margin: const EdgeInsets.only(bottom: 16),
+    margin: const EdgeInsets.only(bottom: 4),
     decoration: BoxDecoration(
-      color: Colors.red.shade50,
-      borderRadius: BorderRadius.circular(8),
+      color: ResultTokens.danger.withValues(alpha: 0.08),
+      borderRadius: BorderRadius.circular(ResultTokens.radius),
     ),
     child: Row(
       children: [
-        const Icon(Icons.error_outline, color: Colors.red),
+        const Icon(Icons.error_outline, color: ResultTokens.danger),
         const SizedBox(width: 8),
         Expanded(
-          child: Text(reason, style: const TextStyle(color: Colors.red)),
+          child: Text(
+            reason,
+            style: const TextStyle(color: ResultTokens.danger),
+          ),
         ),
       ],
     ),
   );
 
-  /// Banner driven by the structured ApiError. Renders user_message
-  /// + a small chip describing the suggested user_action (e.g.
-  /// "Retake document"). Falls back to the legacy [_failureBanner]
-  /// for the message-only case.
-  Widget _failureBannerFromError(ApiError error) {
-    final actionLabel = _userActionLabel(error.userAction);
+  Widget _errorBanner(BuildContext context, ApiError error) {
+    final actionLabel = _actionLabel(error.userAction);
+    final showRetry = error.retryable;
+    final showAction = actionLabel != null;
+
     return Container(
       padding: const EdgeInsets.all(12),
-      margin: const EdgeInsets.only(bottom: 16),
       decoration: BoxDecoration(
-        color: Colors.red.shade50,
-        borderRadius: BorderRadius.circular(8),
+        color: ResultTokens.danger.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(ResultTokens.radius),
+        border: Border.all(color: ResultTokens.danger.withValues(alpha: 0.3)),
       ),
-      child: Row(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.error_outline, color: Colors.red),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(Icons.error_outline, color: ResultTokens.danger),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
                   error.userMessage,
-                  style: const TextStyle(color: Colors.red),
+                  style: const TextStyle(color: ResultTokens.danger),
                 ),
-                if (actionLabel != null) ...[
-                  const SizedBox(height: 6),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.red.shade100,
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Text(
-                      actionLabel,
-                      style: TextStyle(
-                        color: Colors.red.shade900,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
+              ),
+            ],
+          ),
+          if (showAction || showRetry) ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                if (showAction)
+                  FilledButton(
+                    onPressed: onAction == null
+                        ? null
+                        : () => onAction!(error.userAction),
+                    child: Text(actionLabel),
                   ),
-                ],
+                if (showAction && showRetry) const SizedBox(width: 8),
+                if (showRetry)
+                  OutlinedButton(
+                    onPressed: onAction == null
+                        ? null
+                        : () => onAction!(UserAction.waitAndRetry),
+                    child: const Text('Try again'),
+                  ),
               ],
             ),
-          ),
+          ],
         ],
       ),
     );
   }
 
-  /// Default English copy for each [UserAction]. Apps that need
-  /// localised CTAs should override this by reading
-  /// `verification.checks.*.error.userAction` themselves and looking
-  /// up the localised string. Returns null for [UserAction.none].
-  String? _userActionLabel(UserAction action) {
+  /// Map a server-suggested action to a button label. Returning null
+  /// suppresses the primary action button — used for actions that the
+  /// card handles via the dedicated "Try again" button (`retry`,
+  /// `waitAndRetry`) and for [UserAction.none].
+  String? _actionLabel(UserAction action) {
     switch (action) {
       case UserAction.retakeDocument:
-        return 'Retake document';
+        return 'Retake ID';
       case UserAction.retakeSelfie:
         return 'Retake selfie';
       case UserAction.retakeLiveness:
-        return 'Retake liveness video';
+        return 'Retake liveness';
       case UserAction.improveImageQuality:
-        return 'Improve image quality';
-      case UserAction.waitAndRetry:
-        return 'Try again in a moment';
+        return 'Try a clearer photo';
       case UserAction.contactSupport:
         return 'Contact support';
+      case UserAction.retry:
+      case UserAction.waitAndRetry:
       case UserAction.none:
         return null;
     }

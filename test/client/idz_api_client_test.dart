@@ -340,10 +340,20 @@ void main() {
     );
 
     test(
-      'pollTimeout fires KycFailureTimeout with lastStatus + elapsed when status never goes terminal',
+      '202 in_progress is returned as Right(Verification) without any polling',
       () async {
         final h = makeClient();
-        // POST returns 202-style in_progress. GET keeps returning in_progress.
+        var postCount = 0;
+        var getCount = 0;
+        h.dio.interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (o, handler) {
+              if (o.method == 'POST') postCount++;
+              if (o.method == 'GET') getCount++;
+              handler.next(o);
+            },
+          ),
+        );
         h.adapter.onPost(
           '/v1/verifications/document',
           (server) => server.reply(202, {
@@ -354,33 +364,87 @@ void main() {
           }),
           data: Matchers.any,
         );
-        h.adapter.onGet(
-          '/v1/verifications/kyc_test0000000001',
-          (server) => server.reply(200, {
+
+        final result = await h.client.verifyDocument(
+          idFront: idFront,
+          idBack: idBack,
+        );
+
+        expect(result.isRight, isTrue);
+        result.fold((l) => fail('left: $l'), (v) {
+          expect(v.status, 'in_progress');
+          expect(v.isInProgress, isTrue);
+          expect(v.isPassed, isFalse);
+        });
+        expect(postCount, 1);
+        expect(getCount, 0, reason: 'SDK must not poll on its own');
+      },
+    );
+
+    test(
+      'auto-generates an Idempotency-Key when the caller does not pass one',
+      () async {
+        final h = makeClient();
+        final captured = <RequestOptions>[];
+        h.dio.interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (o, handler) {
+              captured.add(o);
+              handler.next(o);
+            },
+          ),
+        );
+        h.adapter.onPost(
+          '/v1/verifications/document',
+          (server) => server.reply(202, {
             ...verificationOk(),
             'status': 'in_progress',
             'completed_at': null,
             'document': null,
           }),
+          data: Matchers.any,
         );
 
-        // 4 s budget — fires after the 2 s poll cadence has at least one tick.
+        await h.client.verifyDocument(idFront: idFront, idBack: idBack);
+
+        final key = captured.single.headers['Idempotency-Key'] as String?;
+        expect(key, isNotNull);
+        expect(
+          RegExp(
+            r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+          ).hasMatch(key!),
+          isTrue,
+          reason: 'generated key should be a v4 UUID, got: $key',
+        );
+      },
+    );
+
+    test(
+      'completed status with review_state=pending stays Right and surfaces isUnderReview',
+      () async {
+        final h = makeClient();
+        h.adapter.onPost(
+          '/v1/verifications/document',
+          (server) => server.reply(200, {
+            ...verificationOk(),
+            'status': 'completed',
+            'review_state': 'pending',
+          }),
+          data: Matchers.any,
+        );
+
         final result = await h.client.verifyDocument(
           idFront: idFront,
           idBack: idBack,
-          pollTimeout: const Duration(seconds: 4),
         );
 
-        expect(result.isLeft, isTrue);
-        result.fold((l) {
-          expect(l, isA<KycFailureTimeout>());
-          final t = l as KycFailureTimeout;
-          expect(t.lastStatus, 'in_progress');
-          expect(t.elapsed, isNotNull);
-          expect(t.elapsed!.inSeconds, greaterThanOrEqualTo(4));
-        }, (_) => fail('expected timeout'));
+        expect(result.isRight, isTrue);
+        result.fold((l) => fail('left: $l'), (v) {
+          expect(v.status, 'completed');
+          expect(v.isUnderReview, isTrue);
+          expect(v.isPassed, isFalse);
+        });
       },
-      timeout: const Timeout(Duration(seconds: 30)),
     );
   });
 

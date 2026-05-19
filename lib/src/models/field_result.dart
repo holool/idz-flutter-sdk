@@ -22,13 +22,24 @@ class FieldResult {
   /// `details` map (e.g. `{"confidence": 0.50}` for low-quality fields).
   final List<FieldIssue> issues;
 
+  /// Server-emitted importance of this field. The pipeline tags each
+  /// field as critical or optional per document type; surface as the
+  /// source of truth instead of re-deriving in client code.
+  final FieldCriticality criticality;
+
   const FieldResult({
     this.raw,
     this.normalized,
     this.valid,
     this.side,
     this.issues = const [],
+    this.criticality = FieldCriticality.unknown,
   });
+
+  /// True iff the server marked this field as required for verification.
+  /// Use this — not a client-side allowlist — to decide whether an
+  /// invalid value blocks the verdict.
+  bool get isCritical => criticality == FieldCriticality.critical;
 
   factory FieldResult.fromJson(Object? json) {
     if (json is Map<String, dynamic>) {
@@ -45,6 +56,7 @@ class FieldResult {
         valid: json['valid'] as bool?,
         side: json['side'] as String?,
         issues: issues,
+        criticality: FieldCriticality.fromWire(json['criticality']),
       );
     }
     return FieldResult(raw: json, normalized: json);
@@ -94,7 +106,40 @@ class FieldResult {
     'side': side,
     if (issues.isNotEmpty)
       'issues': issues.map((i) => i.toJson()).toList(),
+    if (criticality != FieldCriticality.unknown)
+      'criticality': criticality.wireValue,
   };
+}
+
+
+/// Server-emitted importance of a field.
+///
+/// `critical` fields must extract cleanly (`valid == true`) for the
+/// verification to pass without review. `optional` fields can fail
+/// without blocking the verdict. `unknown` is the legacy / back-compat
+/// default for rows the server hasn't tagged yet — treat as `optional`.
+enum FieldCriticality {
+  critical('critical'),
+  optional('optional'),
+  unknown('unknown');
+
+  final String wireValue;
+  const FieldCriticality(this.wireValue);
+
+  /// Parse a wire value. Accepts either a string (`"critical"` /
+  /// `"optional"`) or a bool (true → critical, false → optional). Any
+  /// other shape falls back to [FieldCriticality.unknown].
+  static FieldCriticality fromWire(Object? value) {
+    if (value is bool) {
+      return value ? FieldCriticality.critical : FieldCriticality.optional;
+    }
+    if (value is String) {
+      for (final c in FieldCriticality.values) {
+        if (c.wireValue == value) return c;
+      }
+    }
+    return FieldCriticality.unknown;
+  }
 }
 
 

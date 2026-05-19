@@ -8,6 +8,7 @@ import '../idz_config.dart';
 import '../models/artifacts_catalog.dart';
 import '../models/document_type.dart';
 import '../models/verification.dart';
+import '../utils/idempotency.dart';
 import 'dio_client.dart';
 
 /// Client for the IDz `/v1/verifications/*` API.
@@ -52,30 +53,37 @@ class IdzApiClient {
   // Verifications — POST
   // ---------------------------------------------------------------------
 
-  /// Default for [pollTimeout] on every verify method.
-  ///
-  /// 90 s leaves headroom for the slowest CPU-only DL flow (~60 s in
-  /// the wild) while firing well before the backend's 5 min stuck-
-  /// session sweeper. Apps wanting different envelopes pass their own
-  /// [Duration] per call.
-  static const Duration defaultPollTimeout = Duration(seconds: 90);
+  /// Deprecated — retained only for source-compat with apps that still
+  /// pass `pollTimeout: …`. The SDK no longer blocks on a poll loop;
+  /// verifications resolve asynchronously and the app drives refreshes
+  /// via [fetchVerification].
+  @Deprecated('SDK no longer blocks on a poll loop. Use fetchVerification.')
+  static const Duration defaultPollTimeout = Duration.zero;
 
   /// `POST /v1/verifications/document` — document-only verification.
   /// No biometric check.
   ///
-  /// [pollTimeout] is the wall-clock budget for waiting on the queued
-  /// pipeline to reach a terminal status (`completed`, `rejected`,
-  /// `failed`). When it elapses the SDK returns
-  /// [KycFailureTimeout] with `lastStatus` and `elapsed` populated;
-  /// the backend's 5 min sweeper still flips the row to `failed` later
-  /// so the caller can either refresh from `getVerification` or just
-  /// retry. Defaults to [defaultPollTimeout] (90 s).
+  /// Returns as soon as the server's `202 Accepted` lands; the
+  /// [Verification] will carry `status: in_progress` until the worker
+  /// finishes. Call [fetchVerification] (or wait for a webhook) to read
+  /// the terminal state.
+  ///
+  /// [idempotencyKey] — pass your own to enable submit-retry replay (the
+  /// server replays the cached 202 instead of running a duplicate
+  /// worker). When omitted the SDK generates a fresh v4 UUID per call;
+  /// the header is always sent. The SDK does not cache the generated
+  /// key — host apps that want submit-retry replay must supply (and
+  /// persist) their own.
+  ///
+  /// [pollTimeout] is accepted but ignored. It only existed for the old
+  /// blocking flow; kept here so existing call sites compile.
   KycResult<Verification> verifyDocument({
     required File idFront,
     required File idBack,
     DocumentType documentType = DocumentType.algerianNationalId,
     String? idempotencyKey,
-    Duration pollTimeout = defaultPollTimeout,
+    @Deprecated('Ignored. The SDK no longer polls.')
+    Duration? pollTimeout,
   }) {
     return _runPost(
       path: '/v1/verifications/document',
@@ -85,21 +93,23 @@ class IdzApiClient {
       },
       documentType: documentType,
       idempotencyKey: idempotencyKey,
-      pollTimeout: pollTimeout,
     );
   }
 
   /// `POST /v1/verifications/identity` — document + selfie face match.
   /// No liveness.
   ///
-  /// See [verifyDocument] for [pollTimeout] semantics.
+  /// See [verifyDocument] for return semantics. The 202 hands you back a
+  /// [Verification] with `status: in_progress`; resolve via
+  /// [fetchVerification] or a webhook.
   KycResult<Verification> verifyIdentity({
     required File idFront,
     required File idBack,
     required File selfie,
     DocumentType documentType = DocumentType.algerianNationalId,
     String? idempotencyKey,
-    Duration pollTimeout = defaultPollTimeout,
+    @Deprecated('Ignored. The SDK no longer polls.')
+    Duration? pollTimeout,
   }) {
     return _runPost(
       path: '/v1/verifications/identity',
@@ -110,17 +120,13 @@ class IdzApiClient {
       },
       documentType: documentType,
       idempotencyKey: idempotencyKey,
-      pollTimeout: pollTimeout,
     );
   }
 
   /// `POST /v1/verifications/identity_live` — document + selfie + passive
   /// liveness from video.
   ///
-  /// See [verifyDocument] for [pollTimeout] semantics. Heavier flows
-  /// (DL with the four-engine OCR ensemble on CPU) sometimes want a
-  /// higher value — pass `Duration(seconds: 120)` if you see
-  /// [KycFailureTimeout] in production.
+  /// See [verifyDocument] for return semantics.
   KycResult<Verification> verifyIdentityLive({
     required File idFront,
     required File idBack,
@@ -128,7 +134,8 @@ class IdzApiClient {
     required File video,
     DocumentType documentType = DocumentType.algerianNationalId,
     String? idempotencyKey,
-    Duration pollTimeout = defaultPollTimeout,
+    @Deprecated('Ignored. The SDK no longer polls.')
+    Duration? pollTimeout,
   }) {
     return _runPost(
       path: '/v1/verifications/identity_live',
@@ -140,7 +147,6 @@ class IdzApiClient {
       },
       documentType: documentType,
       idempotencyKey: idempotencyKey,
-      pollTimeout: pollTimeout,
     );
   }
 
@@ -149,24 +155,22 @@ class IdzApiClient {
     required Map<String, MultipartFile> formData,
     required DocumentType documentType,
     required String? idempotencyKey,
-    required Duration pollTimeout,
   }) async {
     try {
       final form = FormData.fromMap(<String, dynamic>{
         ...formData,
         'document_type': documentType.wireValue,
       });
-      final headers = <String, dynamic>{};
-      if (idempotencyKey != null && idempotencyKey.isNotEmpty) {
-        headers['Idempotency-Key'] = idempotencyKey;
-      }
+      final key = (idempotencyKey != null && idempotencyKey.isNotEmpty)
+          ? idempotencyKey
+          : IdempotencyKey.generate();
       final response = await _dio.requestWithRetry(
         () => _dio.dio.post<Map<String, dynamic>>(
           path,
           data: form,
           options: Options(
             contentType: 'multipart/form-data',
-            headers: headers,
+            headers: <String, dynamic>{'Idempotency-Key': key},
           ),
         ),
       );
@@ -175,14 +179,11 @@ class IdzApiClient {
         return const Left(KycFailureUnknown('Empty response body'));
       }
       final verification = Verification.fromJson(data);
-      // Server moved the heavy pipeline behind a 202 + queue. If we got
-      // anything non-terminal back (including the legacy 200 path), poll
-      // GET /v1/verifications/{id} until the status flips.
-      final terminal = await _waitForTerminal(
-        verification,
-        pollTimeout: pollTimeout,
-      );
-      return terminal.fold(Left.new, _classifyTerminal);
+      // The server may still emit 200 OK with a synchronous rejection in
+      // some early-path failures (schema rejects that don't need a
+      // worker). Classify those so callers see the right KycFailure*.
+      // For the common 202 in_progress path the classifier returns Right.
+      return _classifyTerminal(verification);
     } on DioException catch (e) {
       return Left(_failureFromDio(e));
     } catch (e) {
@@ -190,16 +191,15 @@ class IdzApiClient {
     }
   }
 
-  /// Map a terminal-status [Verification] into the right
-  /// `Right(Verification)` / `Left(KycFailure)` outcome.
+  /// Map a [Verification] into the right `Right(Verification)` /
+  /// `Left(KycFailure)` outcome.
   ///
-  /// - `completed` → success.
-  /// - `rejected`  → [KycFailureVerificationRejected] (real biometric /
-  ///   document failure, the user must re-do).
-  /// - `failed`    → either [KycFailureVerificationAbandoned] (the
-  ///   server-side stuck-session sweeper marked it; retriable with the
-  ///   same images) or [KycFailureVerificationFailed] (other backend
-  ///   failure — usually malformed input).
+  /// - `in_progress` → success (the app drives a refresh later).
+  /// - `completed`   → success, regardless of review queue state.
+  /// - `rejected`    → [KycFailureVerificationRejected].
+  /// - `failed`      → [KycFailureVerificationAbandoned] (the stuck-
+  ///   session sweeper; retriable with the same images) or
+  ///   [KycFailureVerificationFailed] otherwise.
   Either<KycFailure, Verification> _classifyTerminal(Verification v) {
     if (v.isRejected) {
       return Left(KycFailureVerificationRejected(v));
@@ -212,54 +212,6 @@ class IdzApiClient {
       return Left(KycFailureVerificationFailed(v));
     }
     return Right(v);
-  }
-
-  /// Poll [getVerification] until the row reaches a terminal status.
-  ///
-  /// `completed`, `rejected`, and `failed` are terminal. Anything else
-  /// (`in_progress`, `processing`, etc.) means the background pipeline
-  /// is still running on the server.
-  ///
-  /// Polls every 2 s with a wall-clock cap of [pollTimeout]. When the
-  /// deadline elapses returns [KycFailureTimeout] populated with the
-  /// last-observed status and elapsed time — independent of any
-  /// transient network errors during polling. The deadline is measured
-  /// from poll-start, not a count of polls, so variable network
-  /// conditions don't extend it.
-  Future<Either<KycFailure, Verification>> _waitForTerminal(
-    Verification initial, {
-    required Duration pollTimeout,
-  }) async {
-    if (_isTerminalStatus(initial.status)) {
-      return Right(initial);
-    }
-    final pollEvery = const Duration(seconds: 2);
-    final start = DateTime.now();
-    final deadline = start.add(pollTimeout);
-    Verification current = initial;
-    while (!_isTerminalStatus(current.status)) {
-      if (DateTime.now().isAfter(deadline)) {
-        return Left(
-          KycFailureTimeout(
-            lastStatus: current.status,
-            elapsed: DateTime.now().difference(start),
-          ),
-        );
-      }
-      await Future<void>.delayed(pollEvery);
-      final result = await getVerification(current.id);
-      final next = result.fold<Verification?>((_) => null, (v) => v);
-      if (next == null) {
-        // Transient GET failure (network blip, 5xx). Try again on next tick.
-        continue;
-      }
-      current = next;
-    }
-    return Right(current);
-  }
-
-  static bool _isTerminalStatus(String status) {
-    return status == 'completed' || status == 'rejected' || status == 'failed';
   }
 
   // ---------------------------------------------------------------------
@@ -321,6 +273,12 @@ class IdzApiClient {
     }
   }
 
+  /// Single GET against `/v1/verifications/{id}` — same as
+  /// [getVerification], but named to match how apps now drive refreshes
+  /// (lifecycle resume, pull-to-refresh, tab-switch). Returns the
+  /// freshest [Verification] without ever blocking on a poll loop.
+  KycResult<Verification> fetchVerification(String id) => getVerification(id);
+
   /// `GET /v1/verifications/{id}/audit` — append-only audit trail.
   KycResult<List<VerificationAuditEntry>> getVerificationAudit(
     String id, {
@@ -356,9 +314,9 @@ class IdzApiClient {
   /// detections, crops, face-match outputs, liveness, other).
   ///
   /// Use this to render an "Artifacts" tab without bucketing items
-  /// client-side. Each [ArtifactItem.url] is server-relative; fetch the
+  /// client-side. Each [ArtifactItem.href] is server-relative; fetch the
   /// bytes with [getArtifactBytes] using the `id` (or your own GET to
-  /// the `url` with the same `Authorization` header).
+  /// the `href` with the same `Authorization` header).
   KycResult<ArtifactsCatalog> getArtifactsCatalog(String verificationId) async {
     try {
       final response = await _dio.requestWithRetry(

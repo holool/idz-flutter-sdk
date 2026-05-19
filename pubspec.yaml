@@ -1,6 +1,6 @@
 name: idz_flutter
 description: "Flutter SDK for the IDz KYC verification API — Algerian national ID + driving licence, with face match and passive liveness."
-version: 0.1.4
+version: 0.2.0
 homepage: https://idz.holool.dev
 repository: https://github.com/holool/idz-flutter-sdk
 issue_tracker: https://github.com/holool/idz-flutter-sdk/issues

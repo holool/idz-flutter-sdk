@@ -94,7 +94,12 @@ enum UserAction {
   /// Same input is fine but lighting / focus / glare needs work.
   improveImageQuality('improve_image_quality'),
 
-  /// Transient backend issue; same request should succeed shortly.
+  /// Resubmit the request as-is. Server-side transient (e.g.
+  /// `SERVER_ABANDONED`); no user input needs to change.
+  retry('retry'),
+
+  /// Same as [retry] but suggest a short delay first. Used for rate
+  /// limits and transient infra issues that benefit from a backoff.
   waitAndRetry('wait_and_retry'),
 
   /// Not recoverable client-side. Surface a support contact link.

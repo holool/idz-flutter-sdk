@@ -311,11 +311,11 @@ class _FaceMatchSection extends StatelessWidget {
               Expanded(
                 child: Column(
                   children: [
-                    if (face.selfie != null)
+                    if (face.selfieCrop != null)
                       ArtifactThumb(
                         client: client,
                         verificationId: verificationId,
-                        artifactId: face.selfie!.id,
+                        artifactId: face.selfieCrop!.id,
                         size: 132,
                       )
                     else
@@ -332,11 +332,11 @@ class _FaceMatchSection extends StatelessWidget {
               Expanded(
                 child: Column(
                   children: [
-                    if (face.idPhoto != null)
+                    if (face.documentFaceCrop != null)
                       ArtifactThumb(
                         client: client,
                         verificationId: verificationId,
-                        artifactId: face.idPhoto!.id,
+                        artifactId: face.documentFaceCrop!.id,
                         size: 132,
                       )
                     else

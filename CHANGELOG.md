@@ -1,5 +1,108 @@
 # Changelog
 
+## 0.2.0
+
+The IDz API is fully async on prod: submissions return `202 Accepted`
+and the row finishes on a worker as `completed | rejected | failed`,
+and `completed` can now also mean "approved but pending human review".
+The SDK catches up — verify methods no longer block on a poll loop,
+and result UIs render a five-state verdict that surfaces the new
+`review_state` cleanly.
+
+### Breaking
+
+- `Verification.isPassed` now requires `reviewState == null`. A
+  `status == 'completed'` row with `review_state: pending` is no
+  longer "verified" — it's `isUnderReview`. Render amber, not green.
+- `ArtifactItem.url` → `ArtifactItem.href`. JSON parsing still accepts
+  the legacy `url` key as a fallback for the transition window.
+- `FaceMatchArtifacts.selfie` → `FaceMatchArtifacts.selfieCrop`;
+  `FaceMatchArtifacts.idPhoto` → `FaceMatchArtifacts.documentFaceCrop`.
+  JSON parsing accepts the legacy `selfie` / `id_photo` keys as
+  fallbacks.
+- Client-side polling is removed from `verifyDocument` /
+  `verifyIdentity` / `verifyIdentityLive`. They now return the
+  initial `202 Accepted` response (typically `status: in_progress`)
+  immediately. Apps drive terminal-state reads through
+  `fetchVerification` (or a webhook).
+
+### Added
+
+- `Verification.reviewState` — new `ReviewState?` field parsed from
+  `review_state` (currently `null` or `pending`).
+- `Verification.isUnderReview`, `isInProgress`, `isFailed`,
+  `isTerminal` helpers, plus the updated `isPassed` semantics.
+- `FieldResult.criticality` (`FieldCriticality.critical` /
+  `optional` / `unknown`) parsed from `criticality` on the wire
+  (accepts string or bool). Use `field.isCritical` instead of a
+  client-side allowlist.
+- `IdzApiClient.fetchVerification(id)` — alias of `getVerification`,
+  named to match how apps now drive refreshes (lifecycle resume,
+  pull-to-refresh, tab-switch).
+- Idempotency-Key is now sent on every verify POST. When the caller
+  doesn't supply one the SDK generates a v4 UUID via
+  `Random.secure()` (`IdempotencyKey.generate()`). The SDK does not
+  cache the generated key — host apps that want submit-retry replay
+  must supply (and persist) their own.
+- `VerdictTone` enum + `VerdictChip` widget — five-quadrant
+  rendering keyed off `(status, reviewState)`: `inProgress`,
+  `verified`, `underReview`, `rejected`, `failed`. Drop into list
+  rows for consistent verdict styling.
+- `KycResultCard` rewritten to render the five states distinctly,
+  pull error copy from `verification.error?.userMessage` (or
+  `checks.document.error.userMessage` as a fallback), and map
+  `error.userAction` onto a primary action button via the optional
+  `onAction` callback. "Try again" appears only when
+  `error.retryable == true`. `developerMessage` is never rendered.
+- `UserAction.retry` — new wire value for transient server errors
+  (`SERVER_ABANDONED`, generic `INTERNAL_ERROR`) where the same
+  request resubmitted as-is is likely to succeed. Distinct from
+  `waitAndRetry` (suggest a backoff) and `retakeDocument` /
+  `retakeSelfie` / `retakeLiveness` (need new user input).
+- Typed accessors on `Verification` for the structured `metadata`
+  advisory blobs the server attaches on rejected / `needs_review`
+  rows. Each accessor returns an empty list / `null` when the blob
+  isn't present, so call sites don't need to null-check the raw map:
+  - `missingFrontFields` / `missingBackFields` (`List<String>`) —
+    YOLO classes the detector couldn't find, paired with a
+    `MISSING_REQUIRED_FIELDS` rejection.
+  - `qualityFailures` / `qualityScoresAll` (`List<QualityScore>`) —
+    per-region blur / glare scores. `qualityFailures` only contains
+    the regions that tripped the gate; `qualityScoresAll` covers
+    every scored region (passing AND failing) so triage UIs can
+    render the distribution next to an `IMAGE_QUALITY_REJECTED`
+    rejection.
+  - `mrzVizDisagreements` (`List<MrzVizDisagreement>`) — field-level
+    disagreements between the MRZ-side and visible-zone OCR. Most
+    flag the row for `needs_review` rather than reject.
+  - `consistencyIssues` (`List<FieldFinding>`) — cross-field date /
+    validity-window checks the pipeline flagged.
+  - `gazetteMisses` (`List<FieldFinding>`) — names or places that
+    weren't in the reference gazette.
+  - `routing` (`RoutingDecision?`) — verdict + index / core / soft
+    failure buckets + review reasons. Present on every terminal
+    verification; `null` while `isInProgress`.
+
+### Wire-shape notes
+
+- `ArtifactItem.fieldName` is now populated for per-field crops (the
+  YOLO class — `first_name_fr`, `blood_type`, …) thanks to
+  server-side field-name plumbing. UIs can attach the right thumbnail
+  to the right row without filename-substring matching. Legacy rows
+  persisted before the change still parse as `fieldName == null`;
+  substring matching keeps working as a fallback for those.
+- Wire-shape additive otherwise — the new `metadata` keys, the
+  `retry` action, and the new `error.code` values from the recent
+  rejection-catalog work all parse cleanly on older servers that
+  don't emit them yet (every accessor returns an empty list /
+  `null` when the field is absent).
+
+### Deprecated
+
+- `IdzApiClient.defaultPollTimeout` and the `pollTimeout` parameter
+  on every verify method. Both are accepted for source-compat but
+  ignored — the SDK no longer polls.
+
 ## 0.1.4
 
 Adopts the IDz API's new structured error object. The legacy

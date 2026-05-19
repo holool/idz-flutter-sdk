@@ -121,29 +121,61 @@ class FieldsTab extends StatelessWidget {
   ) {
     if (mrz == null) return const <String>{};
     final out = <String>{};
-    void check(String fieldName, String? mrzValue, bool? mrzPassed) {
+    void check(
+      String fieldName,
+      String? mrzValue,
+      bool? mrzPassed, {
+      String Function(String) normalize = _normalize,
+    }) {
       if (mrzValue == null || mrzPassed != true) return;
       final f = fields[fieldName];
       final ocr = f?.asString;
       if (ocr == null) return;
-      if (_normalize(ocr) != _normalize(mrzValue)) {
+      if (normalize(ocr) != normalize(mrzValue)) {
         out.add(fieldName);
       }
     }
 
     check('date_of_birth', mrz.dateOfBirth, mrz.checks?.dateOfBirth);
     check('expiry_date', mrz.expiryDate, mrz.checks?.expiryDate);
+    // MRZ `document_number` is the physical card identifier. On a
+    // driving license that's `license_number`; on a national ID it's
+    // `card_number`. The Algerian `nin` / `id_number` is the citizen's
+    // permanent identification number — a separate field, never written
+    // to the MRZ — so we deliberately don't cross-check it.
     check('license_number', mrz.documentNumber, mrz.checks?.documentNumber);
-    check('id_number', mrz.documentNumber, mrz.checks?.documentNumber);
     check('card_number', mrz.documentNumber, mrz.checks?.documentNumber);
     check('last_name_fr', mrz.surname, mrz.checks?.composite);
     check('first_name_fr', mrz.givenNames, mrz.checks?.composite);
-    check('sex', mrz.sex, mrz.checks?.composite);
+    check(
+      'sex',
+      mrz.sex,
+      mrz.checks?.composite,
+      normalize: _normalizeSex,
+    );
     return out;
   }
 
   static String _normalize(String s) {
     return s.toUpperCase().replaceAll(RegExp(r'\s+'), ' ').trim();
+  }
+
+  /// Map any locale's male/female literal onto a single-letter code so
+  /// a VIZ `"ذكر"` doesn't disagree with an MRZ `"M"`.
+  static String _normalizeSex(String s) {
+    final trimmed = s.trim();
+    const male = {
+      'M', 'MALE', 'MASCULIN', 'MASCULINE', 'HOMME',
+      'ذكر', 'ذَكَر', 'رجل',
+    };
+    const female = {
+      'F', 'FEMALE', 'FÉMININ', 'FEMININ', 'FEMME',
+      'أنثى', 'انثى', 'أُنْثَى', 'امرأة',
+    };
+    final upper = trimmed.toUpperCase();
+    if (male.contains(upper) || male.contains(trimmed)) return 'M';
+    if (female.contains(upper) || female.contains(trimmed)) return 'F';
+    return upper;
   }
 }
 

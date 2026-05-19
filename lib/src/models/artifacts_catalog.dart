@@ -4,8 +4,9 @@
 /// section-by-section (Uploads / Detections / Crops / Face match /
 /// Liveness / Other) instead of doing the bucketing itself.
 ///
-/// `face_match` is its own object — not a list — so a UI can render
-/// selfie + id_photo side by side with the similarity score below.
+/// `face_match` is its own object — not a list — so a UI can render the
+/// selfie crop + document-face crop side by side with the similarity
+/// score below.
 class ArtifactsCatalog {
   final List<ArtifactItem> uploads;
   final List<ArtifactItem> detections;
@@ -49,14 +50,17 @@ class ArtifactsCatalog {
 
 /// One artifact entry in the catalog.
 ///
-/// `url` is server-relative (`/v1/verifications/{vid}/artifacts/{aid}`)
+/// [href] is server-relative (`/v1/verifications/{vid}/artifacts/{aid}`)
 /// and streams the bytes back. Fetch with the same `Authorization:
-/// Bearer …` header used for the rest of the API. `field_name` is null
-/// for crops today (per-crop labels aren't persisted yet) and for
-/// uploads where the field name doesn't apply.
+/// Bearer …` header used for the rest of the API. [fieldName] carries
+/// the YOLO class for per-field crops (e.g. `first_name_fr`,
+/// `blood_type`) so the UI can attach the right thumbnail to the right
+/// row without filename-substring matching. Null for full-image
+/// uploads / detection visualisations and for legacy rows persisted
+/// before field-name plumbing.
 class ArtifactItem {
   final String id;
-  final String url;
+  final String href;
   final String? mime;
   final int? size;
   final String? category;
@@ -65,7 +69,7 @@ class ArtifactItem {
 
   const ArtifactItem({
     required this.id,
-    required this.url,
+    required this.href,
     this.mime,
     this.size,
     this.category,
@@ -76,7 +80,7 @@ class ArtifactItem {
   factory ArtifactItem.fromJson(Map<String, dynamic> json) {
     return ArtifactItem(
       id: (json['id'] as Object?)?.toString() ?? '',
-      url: (json['url'] as String?) ?? (json['href'] as String?) ?? '',
+      href: (json['href'] as String?) ?? (json['url'] as String?) ?? '',
       mime: json['mime'] as String?,
       size: json['size'] as int?,
       category: json['category'] as String?,
@@ -88,36 +92,30 @@ class ArtifactItem {
 
 /// Face-match section of the catalog.
 ///
-/// `selfie` is the captured selfie crop, `idPhoto` is the cropped photo
-/// from the document. `similarity` is in [0, 1]; it should match the
-/// `checks.face_match.score` from the verification detail.
-/// `other` collects any face-related artifacts that don't fit the
-/// selfie/id_photo split.
+/// [selfieCrop] is the cropped selfie face, [documentFaceCrop] is the
+/// cropped face from the document. [similarity] is in [0, 1] and should
+/// match `checks.face_match.score` from the verification detail. [other]
+/// collects any face-related artifacts that don't fit the two-crop
+/// split.
 class FaceMatchArtifacts {
-  final ArtifactItem? selfie;
-  final ArtifactItem? idPhoto;
+  final ArtifactItem? selfieCrop;
+  final ArtifactItem? documentFaceCrop;
   final double? similarity;
   final List<ArtifactItem> other;
 
   const FaceMatchArtifacts({
-    this.selfie,
-    this.idPhoto,
+    this.selfieCrop,
+    this.documentFaceCrop,
     this.similarity,
     this.other = const <ArtifactItem>[],
   });
 
   factory FaceMatchArtifacts.fromJson(Map<String, dynamic> json) {
     return FaceMatchArtifacts(
-      selfie: json['selfie'] is Map
-          ? ArtifactItem.fromJson(
-              (json['selfie'] as Map).cast<String, dynamic>(),
-            )
-          : null,
-      idPhoto: json['id_photo'] is Map
-          ? ArtifactItem.fromJson(
-              (json['id_photo'] as Map).cast<String, dynamic>(),
-            )
-          : null,
+      selfieCrop:
+          _itemOrNull(json['selfie_crop']) ?? _itemOrNull(json['selfie']),
+      documentFaceCrop: _itemOrNull(json['document_face_crop']) ??
+          _itemOrNull(json['id_photo']),
       similarity: (json['similarity'] as num?)?.toDouble(),
       other: json['other'] is List
           ? (json['other'] as List)
@@ -126,5 +124,10 @@ class FaceMatchArtifacts {
                 .toList()
           : const <ArtifactItem>[],
     );
+  }
+
+  static ArtifactItem? _itemOrNull(Object? value) {
+    if (value is! Map) return null;
+    return ArtifactItem.fromJson(value.cast<String, dynamic>());
   }
 }
