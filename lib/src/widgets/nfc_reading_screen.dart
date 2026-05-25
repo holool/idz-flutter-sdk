@@ -15,7 +15,16 @@ class NfcResult {
   final String gender;
   final DateTime dateOfBirth;
   final DateTime dateOfExpiry;
+  final String? personalNumber;
   final Uint8List? faceImage;
+
+  /// Whether passive authentication (SOD signature + DG hash) was verified.
+  /// `null` when not attempted — current reader does not run PA.
+  final bool? passiveAuthenticationPassed;
+
+  /// Whether chip / active authentication was verified.
+  /// `null` when not attempted — current reader does not run CA/AA.
+  final bool? chipAuthenticationPassed;
 
   const NfcResult({
     required this.firstName,
@@ -26,8 +35,37 @@ class NfcResult {
     required this.gender,
     required this.dateOfBirth,
     required this.dateOfExpiry,
+    this.personalNumber,
     this.faceImage,
+    this.passiveAuthenticationPassed,
+    this.chipAuthenticationPassed,
   });
+
+  /// Serialize to the shape the backend expects in the
+  /// `nfc_card_reading` multipart form field. See
+  /// [IdzApiClient.verifyDocument] (and siblings) `nfcCardReading`.
+  ///
+  /// Optional fields are omitted when null so missing data does not
+  /// surface as a literal `null` in the stored JSON.
+  Map<String, dynamic> toApiJson() {
+    final iso = DateFormat('yyyy-MM-dd');
+    return <String, dynamic>{
+      'documentNumber': documentNumber,
+      'givenNames': firstName,
+      'surname': lastName,
+      'dateOfBirth': iso.format(dateOfBirth),
+      'dateOfExpiry': iso.format(dateOfExpiry),
+      'sex': gender,
+      if (personalNumber != null && personalNumber!.isNotEmpty)
+        'personalNumber': personalNumber,
+      if (nationality.isNotEmpty) 'nationality': nationality,
+      if (country.isNotEmpty) 'issuingCountry': country,
+      if (passiveAuthenticationPassed != null)
+        'passive_authentication_passed': passiveAuthenticationPassed,
+      if (chipAuthenticationPassed != null)
+        'chip_authentication_passed': chipAuthenticationPassed,
+    };
+  }
 }
 
 enum _NfcState { form, reading, result }
@@ -214,6 +252,7 @@ class _NfcReadingScreenState extends State<NfcReadingScreen> {
         throw Exception('Could not read MRZ data from card');
       }
 
+      final optional = dg1.mrz.optionalData.trim();
       final result = NfcResult(
         firstName: dg1.mrz.firstName,
         lastName: dg1.mrz.lastName,
@@ -223,6 +262,7 @@ class _NfcReadingScreenState extends State<NfcReadingScreen> {
         gender: dg1.mrz.gender,
         dateOfBirth: dg1.mrz.dateOfBirth,
         dateOfExpiry: dg1.mrz.dateOfExpiry,
+        personalNumber: optional.isEmpty ? null : optional,
         faceImage: dg2?.imageData as Uint8List?,
       );
 

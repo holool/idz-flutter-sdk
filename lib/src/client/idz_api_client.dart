@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
@@ -75,6 +76,12 @@ class IdzApiClient {
   /// key — host apps that want submit-retry replay must supply (and
   /// persist) their own.
   ///
+  /// [nfcCardReading] — optional NFC chip payload. When non-null it is
+  /// JSON-encoded and submitted as the `nfc_card_reading` multipart
+  /// field. Use `NfcResult.toApiJson()` to build it from the bundled
+  /// `NfcReadingScreen`. Missing NFC data is valid; the backend treats
+  /// it as image-only verification.
+  ///
   /// [pollTimeout] is accepted but ignored. It only existed for the old
   /// blocking flow; kept here so existing call sites compile.
   KycResult<Verification> verifyDocument({
@@ -82,6 +89,7 @@ class IdzApiClient {
     required File idBack,
     DocumentType documentType = DocumentType.algerianNationalId,
     String? idempotencyKey,
+    Map<String, dynamic>? nfcCardReading,
     @Deprecated('Ignored. The SDK no longer polls.')
     Duration? pollTimeout,
   }) {
@@ -93,21 +101,23 @@ class IdzApiClient {
       },
       documentType: documentType,
       idempotencyKey: idempotencyKey,
+      nfcCardReading: nfcCardReading,
     );
   }
 
   /// `POST /v1/verifications/identity` — document + selfie face match.
   /// No liveness.
   ///
-  /// See [verifyDocument] for return semantics. The 202 hands you back a
-  /// [Verification] with `status: in_progress`; resolve via
-  /// [fetchVerification] or a webhook.
+  /// See [verifyDocument] for return semantics and [nfcCardReading]
+  /// behaviour. The 202 hands you back a [Verification] with
+  /// `status: in_progress`; resolve via [fetchVerification] or a webhook.
   KycResult<Verification> verifyIdentity({
     required File idFront,
     required File idBack,
     required File selfie,
     DocumentType documentType = DocumentType.algerianNationalId,
     String? idempotencyKey,
+    Map<String, dynamic>? nfcCardReading,
     @Deprecated('Ignored. The SDK no longer polls.')
     Duration? pollTimeout,
   }) {
@@ -120,13 +130,15 @@ class IdzApiClient {
       },
       documentType: documentType,
       idempotencyKey: idempotencyKey,
+      nfcCardReading: nfcCardReading,
     );
   }
 
   /// `POST /v1/verifications/identity_live` — document + selfie + passive
   /// liveness from video.
   ///
-  /// See [verifyDocument] for return semantics.
+  /// See [verifyDocument] for return semantics and [nfcCardReading]
+  /// behaviour.
   KycResult<Verification> verifyIdentityLive({
     required File idFront,
     required File idBack,
@@ -134,6 +146,7 @@ class IdzApiClient {
     required File video,
     DocumentType documentType = DocumentType.algerianNationalId,
     String? idempotencyKey,
+    Map<String, dynamic>? nfcCardReading,
     @Deprecated('Ignored. The SDK no longer polls.')
     Duration? pollTimeout,
   }) {
@@ -147,6 +160,7 @@ class IdzApiClient {
       },
       documentType: documentType,
       idempotencyKey: idempotencyKey,
+      nfcCardReading: nfcCardReading,
     );
   }
 
@@ -155,11 +169,14 @@ class IdzApiClient {
     required Map<String, MultipartFile> formData,
     required DocumentType documentType,
     required String? idempotencyKey,
+    Map<String, dynamic>? nfcCardReading,
   }) async {
     try {
       final form = FormData.fromMap(<String, dynamic>{
         ...formData,
         'document_type': documentType.wireValue,
+        if (nfcCardReading != null && nfcCardReading.isNotEmpty)
+          'nfc_card_reading': jsonEncode(nfcCardReading),
       });
       final key = (idempotencyKey != null && idempotencyKey.isNotEmpty)
           ? idempotencyKey
