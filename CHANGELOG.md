@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.2.1
+
+Pairs with backend PR holool/IDz#173 — optional NFC chip payload on
+the three verification POSTs. Missing NFC remains valid; the backend
+treats it as image-only verification.
+
+### Added
+
+- `IdzApiClient.verifyDocument`, `verifyIdentity`, `verifyIdentityLive`
+  gain an optional `nfcCardReading: Map<String, dynamic>?` parameter.
+  When non-null it is JSON-encoded and submitted as the
+  `nfc_card_reading` multipart form field. Empty maps are dropped
+  (treated identically to omitting NFC).
+- `NfcResult.toApiJson()` — serializes a chip read into the exact
+  shape the backend expects (`documentNumber`, `givenNames`, `surname`,
+  `dateOfBirth`, `dateOfExpiry`, `sex`, optional `personalNumber`,
+  optional `nationality`, optional `issuingCountry`). Pass the result
+  straight into the new `nfcCardReading` parameter.
+- `NfcResult.personalNumber` — surfaces DG1 optional-data (carries
+  the 18-digit Algerian personal number on TD1 IDs). Omitted from
+  `toApiJson()` when empty.
+- `NfcResult.passiveAuthenticationPassed` /
+  `chipAuthenticationPassed` fields — `null` when not attempted (the
+  bundled reader does not yet run PA/CA; flags are reserved for
+  future readers that do). When non-null they surface as
+  `passive_authentication_passed` / `chip_authentication_passed`
+  in the API payload.
+
+### Compatibility
+
+- Pure addition. Existing call sites that don't pass `nfcCardReading`
+  behave exactly as before. Pre-0.2.1 backends silently ignore the
+  extra multipart field.
+
 ## 0.2.0
 
 The IDz API is fully async on prod: submissions return `202 Accepted`

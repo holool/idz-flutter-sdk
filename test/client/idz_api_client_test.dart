@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -506,6 +507,140 @@ void main() {
       final form = captured.single.data as FormData;
       final fileKeys = form.files.map((e) => e.key).toSet();
       expect(fileKeys, equals({'id_front', 'id_back', 'selfie', 'video'}));
+    });
+  });
+
+  group('nfcCardReading', () {
+    test('JSON-encoded into nfc_card_reading field on verifyDocument',
+        () async {
+      final h = makeClient();
+      final captured = <RequestOptions>[];
+      h.dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (o, handler) {
+            captured.add(o);
+            handler.next(o);
+          },
+        ),
+      );
+      h.adapter.onPost(
+        '/v1/verifications/document',
+        (server) => server.reply(200, verificationOk()),
+        data: Matchers.any,
+      );
+
+      final nfc = <String, dynamic>{
+        'documentNumber': '123456789',
+        'givenNames': 'AMINE',
+        'surname': 'BENALI',
+        'dateOfBirth': '1990-01-01',
+        'dateOfExpiry': '2030-01-01',
+        'sex': 'M',
+        'personalNumber': '123456789012345678',
+      };
+      await h.client.verifyDocument(
+        idFront: idFront,
+        idBack: idBack,
+        nfcCardReading: nfc,
+      );
+
+      final form = captured.single.data as FormData;
+      final entry = form.fields.firstWhere(
+        (e) => e.key == 'nfc_card_reading',
+        orElse: () => const MapEntry('', ''),
+      );
+      expect(entry.key, 'nfc_card_reading',
+          reason: 'field must be present when nfcCardReading is non-null');
+      final decoded = jsonDecode(entry.value) as Map<String, dynamic>;
+      expect(decoded, equals(nfc));
+    });
+
+    test('omitted when nfcCardReading is null or empty', () async {
+      Future<Set<String>> fieldsOnPost({
+        Map<String, dynamic>? nfc,
+      }) async {
+        final h = makeClient();
+        final captured = <RequestOptions>[];
+        h.dio.interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (o, handler) {
+              captured.add(o);
+              handler.next(o);
+            },
+          ),
+        );
+        h.adapter.onPost(
+          '/v1/verifications/document',
+          (server) => server.reply(200, verificationOk()),
+          data: Matchers.any,
+        );
+        await h.client.verifyDocument(
+          idFront: idFront,
+          idBack: idBack,
+          nfcCardReading: nfc,
+        );
+        final form = captured.single.data as FormData;
+        return form.fields.map((e) => e.key).toSet();
+      }
+
+      expect(await fieldsOnPost(nfc: null), isNot(contains('nfc_card_reading')));
+      expect(await fieldsOnPost(nfc: <String, dynamic>{}),
+          isNot(contains('nfc_card_reading')));
+    });
+
+    test('also wired on verifyIdentity and verifyIdentityLive', () async {
+      Future<MapEntry<String, String>> capture({
+        required String path,
+        required Future<dynamic> Function(IdzApiClient c) call,
+      }) async {
+        final h = makeClient();
+        final captured = <RequestOptions>[];
+        h.dio.interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (o, handler) {
+              captured.add(o);
+              handler.next(o);
+            },
+          ),
+        );
+        h.adapter.onPost(
+          path,
+          (server) => server.reply(200, verificationOk()),
+          data: Matchers.any,
+        );
+        await call(h.client);
+        final form = captured.single.data as FormData;
+        return form.fields.firstWhere(
+          (e) => e.key == 'nfc_card_reading',
+          orElse: () => const MapEntry('', ''),
+        );
+      }
+
+      final nfc = <String, dynamic>{'documentNumber': '999'};
+      final identity = await capture(
+        path: '/v1/verifications/identity',
+        call: (c) => c.verifyIdentity(
+          idFront: idFront,
+          idBack: idBack,
+          selfie: selfie,
+          nfcCardReading: nfc,
+        ),
+      );
+      expect(identity.key, 'nfc_card_reading');
+      expect(jsonDecode(identity.value), equals(nfc));
+
+      final live = await capture(
+        path: '/v1/verifications/identity_live',
+        call: (c) => c.verifyIdentityLive(
+          idFront: idFront,
+          idBack: idBack,
+          selfie: selfie,
+          video: video,
+          nfcCardReading: nfc,
+        ),
+      );
+      expect(live.key, 'nfc_card_reading');
+      expect(jsonDecode(live.value), equals(nfc));
     });
   });
 
