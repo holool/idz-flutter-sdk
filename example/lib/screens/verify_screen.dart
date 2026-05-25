@@ -79,6 +79,28 @@ class _VerifyScreenState extends State<VerifyScreen>
     setState(() {});
   }
 
+  Future<void> _captureWithCamera({
+    required bool isFront,
+    required void Function(File) sink,
+  }) async {
+    final captured = await Navigator.of(context).push<File>(
+      MaterialPageRoute(
+        builder: (_) => DocumentCaptureScreen(
+          isFront: isFront,
+          // Default probe = blur + glare + steadiness pills. Pass
+          // CaptureQualityProbe.disabled() to turn the live indicator
+          // off entirely.
+          qualityProbe: CaptureQualityProbe.standard(),
+          onCapture: (file) => Navigator.of(context).pop(file),
+          onCancel: () => Navigator.of(context).pop(),
+        ),
+      ),
+    );
+    if (captured == null) return;
+    sink(captured);
+    setState(() {});
+  }
+
   bool get _canRun {
     if (!AppConfig.isReady) return false;
     if (_idFront == null || _idBack == null) return false;
@@ -199,12 +221,18 @@ class _VerifyScreenState extends State<VerifyScreen>
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const Divider(height: 32),
-          _filePicker(
-            'ID front',
-            _idFront,
-            () => _pickImage((f) => _idFront = f),
+          _idPicker(
+            label: 'ID front',
+            file: _idFront,
+            isFront: true,
+            onPicked: (f) => _idFront = f,
           ),
-          _filePicker('ID back', _idBack, () => _pickImage((f) => _idBack = f)),
+          _idPicker(
+            label: 'ID back',
+            file: _idBack,
+            isFront: false,
+            onPicked: (f) => _idBack = f,
+          ),
           if (_mode != _Mode.document)
             _filePicker(
               'Selfie',
@@ -264,6 +292,41 @@ class _VerifyScreenState extends State<VerifyScreen>
             ),
           ),
           OutlinedButton(onPressed: pick, child: const Text('Pick')),
+        ],
+      ),
+    );
+  }
+
+  Widget _idPicker({
+    required String label,
+    required File? file,
+    required bool isFront,
+    required void Function(File) onPicked,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              file == null ? label : '$label: ${file.uri.pathSegments.last}',
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          OutlinedButton.icon(
+            onPressed: () => _captureWithCamera(
+              isFront: isFront,
+              sink: onPicked,
+            ),
+            icon: const Icon(Icons.camera_alt, size: 16),
+            label: const Text('Camera'),
+          ),
+          const SizedBox(width: 6),
+          OutlinedButton.icon(
+            onPressed: () => _pickImage(onPicked),
+            icon: const Icon(Icons.photo_library, size: 16),
+            label: const Text('Gallery'),
+          ),
         ],
       ),
     );

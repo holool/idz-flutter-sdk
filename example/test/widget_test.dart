@@ -8,10 +8,8 @@ void main() {
   ) async {
     await tester.pumpWidget(const IdzExampleApp());
 
-    // Verify the app title and navigation destinations are present.
-    expect(find.text('Complete KYC'), findsOneWidget);
-    expect(find.text('KYC + Video'), findsOneWidget);
-    expect(find.text('OCR Only'), findsOneWidget);
+    // The example was rewritten for /v1 in 0.1.0 — two destinations.
+    expect(find.text('Verify'), findsOneWidget);
     expect(find.text('Settings'), findsOneWidget);
   });
 }

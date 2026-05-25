@@ -24,6 +24,8 @@ export 'src/exceptions/kyc_failure.dart';
 export 'src/webhooks/idz_webhooks.dart';
 
 // Widgets — UI helpers, optional
+export 'src/widgets/capture/capture_quality_probe.dart';
+export 'src/widgets/capture/quality_indicator.dart';
 export 'src/widgets/nfc_reading_screen.dart';
 export 'src/widgets/document_capture_screen.dart';
 export 'src/widgets/kyc_progress_overlay.dart';

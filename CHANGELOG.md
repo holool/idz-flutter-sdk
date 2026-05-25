@@ -1,5 +1,61 @@
 # Changelog
 
+## 0.2.2
+
+First slice of the move off ML Kit on the capture side: a pure-Dart
+live quality probe on `DocumentCaptureScreen` so the user gets
+immediate visual feedback that their shot will be usable before they
+tap the shutter. No new native deps, no model assets — just three
+cheap statistics over the camera's Y (luma) plane.
+
+### Added
+
+- `CaptureQualityProbe` — three independent probes over a downscaled
+  Y plane:
+  - **Blur** (Laplacian variance, default threshold 80)
+  - **Glare** (overexposed-pixel fraction, default 3%)
+  - **Steadiness** (mean Y-diff between frames, default 5/255)
+  Each threshold is independently tunable, `null` disables that
+  probe. `CaptureQualityProbe.standard()` ships sensible defaults;
+  `CaptureQualityProbe.disabled()` turns the indicator off entirely.
+- `QualityReport` — output of one probe evaluation. Booleans drive
+  the UI (`sharp`, `noGlare`, `steady`, `allGood`); raw scores
+  (`blurVariance`, `glareFraction`, `steadinessDelta`) exposed for
+  analytics / threshold tuning.
+- `CaptureQualityIndicator` — bottom-of-screen pill strip rendering
+  one chip per active probe (green/orange). Used internally by
+  `DocumentCaptureScreen`.
+- `DocumentCaptureScreen` gains two optional parameters:
+  - `qualityProbe` (default `CaptureQualityProbe.standard()`) —
+    the probe configuration.
+  - `onQualityChanged` — callback fired on every probe evaluation
+    (~5 Hz) for analytics.
+  The shutter is never disabled by the probe; failing checks only
+  recolour the FAB and update its tooltip so the user retains
+  override.
+- Example app's `verify_screen` gains a "Camera" button next to
+  "Gallery" on the ID front/back rows, launching the new capture
+  flow with the standard probe enabled.
+
+### Implementation notes
+
+- `DocumentCaptureScreen` now opens the camera in
+  `ImageFormatGroup.yuv420` on both platforms so the Y plane is
+  directly readable without colour-space conversion.
+- Frames are sampled at ~5 Hz (200 ms throttle). Each probe runs
+  over a nearest-neighbour downscaled Y buffer (longer side ≤ 160 px)
+  for ~1 ms per evaluation on mid-range Android.
+- The image stream is stopped automatically before `takePicture()`
+  (required by `package:camera`) and restarted on Retake.
+- If image streaming is unsupported on the device (some older
+  emulators), the probe degrades silently: the UI loses its quality
+  pills but the manual shutter still works.
+
+### Compatibility
+
+- Pure addition. All existing call sites that don't pass
+  `qualityProbe` get the new live indicator for free.
+
 ## 0.2.1
 
 Pairs with backend PR holool/IDz#173 — optional NFC chip payload on
