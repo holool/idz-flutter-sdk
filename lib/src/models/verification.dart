@@ -1,11 +1,18 @@
 import 'api_error.dart';
 import 'document_type.dart';
 import 'field_result.dart';
+import 'verification_metadata.dart';
 
 class Verification {
   final String id;
   final String mode;
   final String status;
+
+  /// Review-queue state for a `completed` row. `null` everywhere else,
+  /// and `null` on `completed` rows the pipeline approved outright. See
+  /// [ReviewState].
+  final ReviewState? reviewState;
+
   final DateTime createdAt;
   final DateTime? completedAt;
   final VerificationDocument? document;
@@ -26,6 +33,7 @@ class Verification {
     required this.id,
     required this.mode,
     required this.status,
+    this.reviewState,
     required this.createdAt,
     this.completedAt,
     this.document,
@@ -35,8 +43,31 @@ class Verification {
     this.error,
   });
 
-  bool get isPassed => status == 'completed';
+  /// True iff the pipeline ran and approved the verification outright —
+  /// no manual review queued. `status == 'completed' && reviewState ==
+  /// null`. Use this as the green-check gate; `status == 'completed'`
+  /// alone is not enough now that the server can return "approved but
+  /// pending human review".
+  bool get isPassed => status == 'completed' && reviewState == null;
+
+  /// `status == 'completed'` but the server queued the row for human
+  /// review. Render amber, not green. The fields are extracted and
+  /// available; the verdict is just pending.
+  bool get isUnderReview =>
+      status == 'completed' && reviewState == ReviewState.pending;
+
   bool get isRejected => status == 'rejected';
+  bool get isFailed => status == 'failed';
+
+  /// True iff [status] is one of `completed`, `rejected`, `failed`. The
+  /// pipeline won't progress past a terminal status; the only mutation
+  /// after this point is a reviewer flipping [reviewState].
+  bool get isTerminal =>
+      status == 'completed' || status == 'rejected' || status == 'failed';
+
+  /// True iff the pipeline hasn't reached a terminal status yet (the
+  /// row is still being worked on by the async worker).
+  bool get isInProgress => !isTerminal;
 
   /// Pipeline-emitted hints surfaced via `metadata.postprocess_notes`.
   /// Common patterns:
@@ -44,10 +75,84 @@ class Verification {
   ///   - `validity_window:Xd expected~Yd (...)` — issue→expiry delta off.
   ///   - `categories:*` / `categories_table:*` — DL categories merge note.
   /// Empty list when no notes were emitted.
-  List<String> get postprocessNotes {
-    final raw = metadata?['postprocess_notes'];
+  List<String> get postprocessNotes => _stringListFromMetadata('postprocess_notes');
+
+  /// YOLO field classes the detector couldn't find on the front side.
+  /// Populated alongside an `error.code == 'MISSING_REQUIRED_FIELDS'`
+  /// rejection. Empty list when the front extracted cleanly (or when
+  /// the rejection lives on the back side).
+  List<String> get missingFrontFields => _stringListFromMetadata('missing_front_fields');
+
+  /// YOLO field classes the detector couldn't find on the back side.
+  /// See [missingFrontFields].
+  List<String> get missingBackFields => _stringListFromMetadata('missing_back_fields');
+
+  /// Per-region quality scores for the regions that *failed* the gate.
+  /// Populated alongside an `error.code == 'IMAGE_QUALITY_REJECTED'`
+  /// rejection. Use [qualityScoresAll] when you want passing regions
+  /// too (e.g. to show the distribution).
+  List<QualityScore> get qualityFailures => _objectListFromMetadata(
+        'quality_failures',
+        QualityScore.fromJson,
+      );
+
+  /// Per-region quality scores for *every* scored region — passing AND
+  /// failing. Populated when the gate ran end-to-end (so the reviewer
+  /// can triage false positives). Empty when the gate short-circuited
+  /// on the first failure or was skipped entirely.
+  List<QualityScore> get qualityScoresAll => _objectListFromMetadata(
+        'quality_scores_all',
+        QualityScore.fromJson,
+      );
+
+  /// MRZ ↔ VIZ field-level disagreements the reviewer should look at.
+  /// Empty when both sides agreed or only one of them was available.
+  /// A non-empty list does not by itself imply a rejection — most
+  /// disagreements flag the row for `needs_review`.
+  List<MrzVizDisagreement> get mrzVizDisagreements => _objectListFromMetadata(
+        'mrz_viz_disagreements',
+        MrzVizDisagreement.fromJson,
+      );
+
+  /// Cross-field consistency issues (date math, validity-window) the
+  /// pipeline flagged. Empty when every cross-field check passed.
+  List<FieldFinding> get consistencyIssues => _objectListFromMetadata(
+        'consistency_issues',
+        FieldFinding.fromJson,
+      );
+
+  /// Names or places that weren't found in the reference gazette.
+  /// Advisory only — a non-empty list typically flags the row for
+  /// `needs_review` rather than rejecting it.
+  List<FieldFinding> get gazetteMisses => _objectListFromMetadata(
+        'gazette_misses',
+        FieldFinding.fromJson,
+      );
+
+  /// Routing decision the pipeline landed on. Present on every
+  /// terminal verification; `null` while `isInProgress`.
+  RoutingDecision? get routing {
+    final raw = metadata?['routing'];
+    if (raw is Map) return RoutingDecision.fromJson(raw.cast<String, dynamic>());
+    return null;
+  }
+
+  List<String> _stringListFromMetadata(String key) {
+    final raw = metadata?[key];
     if (raw is List) return raw.whereType<String>().toList();
     return const <String>[];
+  }
+
+  List<T> _objectListFromMetadata<T>(
+    String key,
+    T Function(Map<String, dynamic>) fromJson,
+  ) {
+    final raw = metadata?[key];
+    if (raw is! List) return const <Never>[].cast<T>();
+    return raw
+        .whereType<Map>()
+        .map((item) => fromJson(item.cast<String, dynamic>()))
+        .toList();
   }
 
   factory Verification.fromJson(Map<String, dynamic> json) {
@@ -55,6 +160,7 @@ class Verification {
       id: json['id'] as String,
       mode: json['mode'] as String,
       status: json['status'] as String,
+      reviewState: ReviewState.fromWire(json['review_state'] as String?),
       createdAt: DateTime.parse(json['created_at'] as String),
       completedAt: _dateTimeOrNull(json['completed_at']),
       document: json['document'] is Map<String, dynamic>
@@ -78,6 +184,32 @@ class Verification {
           ? ApiError.fromJson(json['error'] as Map<String, dynamic>)
           : null,
     );
+  }
+}
+
+/// Server-side review queue state for a `completed` verification.
+///
+/// Only meaningful when [Verification.status] is `completed`. A `null`
+/// value means "no review queued — approved outright". A `pending`
+/// value means "approved by the pipeline but flagged for human review;
+/// the reviewer hasn't decided yet".
+///
+/// In the dashboard a reviewer eventually flips this to `approved` or
+/// `rejected`; the SDK doesn't model those terminal review verdicts as
+/// a separate enum because they collapse onto [Verification.status] in
+/// the final row.
+enum ReviewState {
+  pending('pending');
+
+  final String wireValue;
+  const ReviewState(this.wireValue);
+
+  static ReviewState? fromWire(String? value) {
+    if (value == null || value.isEmpty) return null;
+    for (final state in ReviewState.values) {
+      if (state.wireValue == value) return state;
+    }
+    return null;
   }
 }
 

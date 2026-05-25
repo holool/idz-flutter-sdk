@@ -3,7 +3,7 @@ import 'package:idz_flutter/idz_flutter.dart';
 
 void main() {
   group('ArtifactsCatalog.fromJson', () {
-    test('parses every section', () {
+    test('parses every section (legacy keys: url / selfie / id_photo)', () {
       final cat = ArtifactsCatalog.fromJson({
         'uploads': [
           {
@@ -45,18 +45,44 @@ void main() {
       });
       expect(cat.uploads.single.id, 'u1');
       expect(cat.uploads.single.side, 'front');
+      expect(cat.uploads.single.href, '/v1/verifications/kyc_x/artifacts/u1');
       expect(cat.crops.single.id, 'c1');
       expect(cat.faceMatch?.similarity, 0.91);
-      expect(cat.faceMatch?.selfie?.id, 'fs');
-      expect(cat.faceMatch?.idPhoto?.id, 'fi');
+      expect(cat.faceMatch?.selfieCrop?.id, 'fs');
+      expect(cat.faceMatch?.documentFaceCrop?.id, 'fi');
     });
 
-    test('falls back to href when url is missing on an item', () {
-      final item = ArtifactItem.fromJson({
+    test('accepts the new selfie_crop / document_face_crop keys', () {
+      final cat = ArtifactsCatalog.fromJson({
+        'face_match': {
+          'selfie_crop': {
+            'id': 'fs',
+            'href': '/v1/verifications/kyc_x/artifacts/fs',
+          },
+          'document_face_crop': {
+            'id': 'fi',
+            'href': '/v1/verifications/kyc_x/artifacts/fi',
+          },
+          'similarity': 0.88,
+        },
+      });
+      expect(cat.faceMatch?.selfieCrop?.id, 'fs');
+      expect(cat.faceMatch?.documentFaceCrop?.id, 'fi');
+      expect(cat.faceMatch?.similarity, 0.88);
+    });
+
+    test('prefers href but falls back to url for legacy payloads', () {
+      final fromHref = ArtifactItem.fromJson({
         'id': 'x',
         'href': '/v1/verifications/kyc_x/artifacts/x',
       });
-      expect(item.url, '/v1/verifications/kyc_x/artifacts/x');
+      expect(fromHref.href, '/v1/verifications/kyc_x/artifacts/x');
+
+      final fromUrl = ArtifactItem.fromJson({
+        'id': 'y',
+        'url': '/v1/verifications/kyc_x/artifacts/y',
+      });
+      expect(fromUrl.href, '/v1/verifications/kyc_x/artifacts/y');
     });
 
     test('handles null face_match block', () {
@@ -70,7 +96,7 @@ void main() {
     test('coerces non-string id (server may return int) to a string', () {
       final item = ArtifactItem.fromJson({
         'id': 42,
-        'url': '/v1/verifications/kyc_x/artifacts/42',
+        'href': '/v1/verifications/kyc_x/artifacts/42',
       });
       expect(item.id, '42');
     });

@@ -65,8 +65,8 @@ void main() {
     expect(find.text('Last Name Fr'), findsOneWidget);
     // MOHAMED appears in both the table row and the MRZ given_names row.
     expect(find.text('MOHAMED'), findsAtLeast(1));
-    expect(find.text('MRZ verified'), findsOneWidget);
-    expect(find.text('Doc #'), findsOneWidget);
+    expect(find.text('Valid'), findsOneWidget);
+    expect(find.text('Document #'), findsOneWidget);
   });
 
   testWidgets('shows MRZ disagrees badge when DOB conflicts and check passed', (
@@ -106,7 +106,7 @@ void main() {
 
     expect(find.text('MRZ disagrees'), findsOneWidget);
     // MRZ section header should still be present.
-    expect(find.text('MRZ invalid'), findsOneWidget);
+    expect(find.text('Invalid'), findsOneWidget);
   });
 
   testWidgets('renders validity-window banner when note present', (
